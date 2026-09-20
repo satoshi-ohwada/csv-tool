@@ -23,6 +23,7 @@ let filterAddSelectionRow, filterAddToSelection, btnFilterSearchClear, filterSea
 let btnToggleNumRange, filterNumRangePanel, filterNumMin, filterNumMax, btnFilterNumApply, btnFilterNumClear;
 let statusCalcArea, calcAvg, calcCount, calcSum;
 let btnSearchHelp, searchHelpPopup, btnSearchHelpClose;
+let btnExtractFilter, btnCopyAll;
 
 // 行コピー用クリップボードバッファ
 let rowClipboardBuffer = null;
@@ -125,10 +126,12 @@ function getDOMElements() {
   btnReplaceAll = document.getElementById('btn-replace-all');
   btnFindCancel = document.getElementById('btn-find-cancel');
 
-  // 検索・絞り込みガイド
+  // 検索・絞り込みガイド＆抽出
   btnSearchHelp = document.getElementById('btn-search-help');
   searchHelpPopup = document.getElementById('search-help-popup');
   btnSearchHelpClose = document.getElementById('btn-search-help-close');
+  btnExtractFilter = document.getElementById('btn-extract-filter');
+  btnCopyAll = document.getElementById('btn-copy-all');
 
   // オートフィルター
   filterActiveBadge = document.getElementById('filter-active-badge');
@@ -316,6 +319,20 @@ function setupEventListeners() {
     btnSearchHelpClose.addEventListener('click', hideSearchHelpPopup);
   }
 
+  // 絞り込み結果の新規タブ抽出
+  if (btnExtractFilter) {
+    btnExtractFilter.addEventListener('click', () => {
+      extractFilteredRowsToNewTab();
+    });
+  }
+
+  // 表示中の表全体を変数名付きでクリップボードにコピー
+  if (btnCopyAll) {
+    btnCopyAll.addEventListener('click', () => {
+      copyAllWithHeadersToClipboard();
+    });
+  }
+
   // オートフィルターポップアップ
   if (filterActiveBadge) {
     filterActiveBadge.addEventListener('click', clearColumnFilter);
@@ -447,7 +464,19 @@ function setupEventListeners() {
   if (tableArea) {
     tableArea.addEventListener('mousedown', handleCellMouseDown);
     tableArea.addEventListener('mouseover', handleCellMouseMove);
+    tableArea.addEventListener('click', (e) => {
+      const rownumHeader = e.target.closest('.tabulator-col.tabulator-rownum-cell');
+      if (rownumHeader) {
+        selectAllCells();
+        showToast('表全体を選択しました (Ctrl+Shift+C で変数名付き全コピー)', 'info');
+      }
+    });
     tableArea.addEventListener('dblclick', (e) => {
+      const rownumHeader = e.target.closest('.tabulator-col.tabulator-rownum-cell');
+      if (rownumHeader) {
+        copyAllWithHeadersToClipboard();
+        return;
+      }
       const headerEl = e.target.closest('.tabulator-col');
       if (headerEl && currentTable) {
         const field = headerEl.getAttribute('tabulator-field');
@@ -541,8 +570,30 @@ function handleGlobalKeydown(e) {
     return;
   }
 
+  // Ctrl + A (表全体を選択) - 非編集中
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'a') {
+    if (!isEditing) {
+      const tag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+      if (tag !== 'input' && tag !== 'textarea' && tag !== 'select') {
+        e.preventDefault();
+        selectAllCells();
+        showToast('表全体を選択しました (Ctrl+Shift+C で変数名付きコピー)', 'info');
+        return;
+      }
+    }
+  }
+
+  // Ctrl + Shift + C (変数名付きでコピー) - 非編集中
+  if ((e.ctrlKey || e.metaKey) && e.shiftKey && e.key.toLowerCase() === 'c') {
+    if (!isEditing) {
+      e.preventDefault();
+      copySelectedWithHeadersToClipboard();
+      return;
+    }
+  }
+
   // Ctrl + C (コピー) - 非編集中
-  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'c') {
     if (!isEditing) {
       e.preventDefault();
       copySelectedCellsToClipboard();
@@ -727,6 +778,32 @@ function selectSingleCell(rowIndex, colIndex) {
       el.focus();
       el.scrollIntoView({ block: 'nearest', inline: 'nearest' });
     }
+  }
+}
+
+// 表全体の全セルを選択状態にする (Excelの全選択風)
+function selectAllCells() {
+  if (!currentTable || !activeTabId) return;
+  const rows = getAllRows();
+  const cols = getActiveColumns();
+  if (rows.length === 0 || cols.length === 0) return;
+
+  activeFocusCell = { rowIndex: 0, colIndex: 0 };
+  selectionAnchor = { rowIndex: 0, colIndex: 0 };
+  selectionRange = {
+    minRow: 0,
+    maxRow: rows.length - 1,
+    minCol: 0,
+    maxCol: cols.length - 1,
+    startRow: 0,
+    startCol: 0,
+    endRow: rows.length - 1,
+    endCol: cols.length - 1
+  };
+
+  updateRangeHighlight();
+  if (typeof updateCalculationStatusBar === 'function') {
+    updateCalculationStatusBar();
   }
 }
 
@@ -2039,7 +2116,25 @@ function buildTabulatorColumns(headers) {
       frozen: true,
       movable: false,
       cssClass: "tabulator-rownum-cell",
-      title: "#"
+      title: "#",
+      headerTooltip: "クリックで表全体を選択 / ダブルクリックで変数名付き全コピー",
+      headerClick: (e, column) => {
+        selectAllCells();
+        showToast('表全体を選択しました (Ctrl+Shift+C で変数名付き全コピー)', 'info');
+      },
+      headerDblClick: (e, column) => {
+        copyAllWithHeadersToClipboard();
+      },
+      headerContextMenu: [
+        {
+          label: "📑 変数名付きで表全体をコピー (Ctrl+Shift+C)",
+          action: () => copyAllWithHeadersToClipboard()
+        },
+        {
+          label: "✅ 表全体を選択 (Ctrl+A)",
+          action: () => selectAllCells()
+        }
+      ]
     }
   ];
 
@@ -2069,6 +2164,11 @@ function buildTabulatorColumns(headers) {
 // 列ヘッダーの右クリックメニュー定義
 function getHeaderContextMenu() {
   return [
+    {
+      label: "📑 変数名付きで表全体をコピー (Ctrl+Shift+C)",
+      action: () => copyAllWithHeadersToClipboard()
+    },
+    { separator: true },
     {
       label: "✏️ 列名（変数名）を変更",
       action: (e, column) => renameColumn(column)
@@ -3851,6 +3951,7 @@ function parseSearchQueryToPredicate(query, activeCols) {
 // 検索ハンドラ (クイック検索: 複数列スペース区切りAND、OR、()グルーピング、列指定、ワイルドカード、数値条件対応)
 function handleSearch() {
   if (!currentTable) return;
+  updateExtractFilterButtonUI();
   const rawQuery = searchInput.value.trim();
   if (!rawQuery) {
     if (activeColumnFilters && activeColumnFilters.size > 0) {
@@ -3899,6 +4000,140 @@ function showSearchHelpPopup() {
 function hideSearchHelpPopup() {
   if (!searchHelpPopup) return;
   searchHelpPopup.style.display = 'none';
+}
+
+// 抽出ボタンの強調UI同期
+function updateExtractFilterButtonUI() {
+  if (!btnExtractFilter) return;
+  const hasSearch = Boolean(searchInput && searchInput.value.trim().length > 0);
+  const hasColFilter = Boolean(activeColumnFilters && activeColumnFilters.size > 0);
+  const isFiltered = hasSearch || hasColFilter;
+  btnExtractFilter.classList.toggle('has-filter', isFiltered);
+}
+
+// 新規抽出タブ名の生成（例: sample.csv -> sample_抽出.csv, 重複時は sample_抽出_2.csv）
+function generateExtractedTabName(baseTabName) {
+  let base = baseTabName || '無題.csv';
+  let ext = '.csv';
+  const dotIdx = base.lastIndexOf('.');
+  if (dotIdx !== -1) {
+    ext = base.substring(dotIdx);
+    base = base.substring(0, dotIdx);
+  }
+  
+  let candidate = `${base}_抽出${ext}`;
+  let counter = 2;
+  while (tabs.some(t => t.name === candidate)) {
+    candidate = `${base}_抽出_${counter}${ext}`;
+    counter++;
+  }
+  return candidate;
+}
+
+// 絞り込み結果行を新しいタブに抽出して開く
+function extractFilteredRowsToNewTab() {
+  if (!currentTable || !activeTabId) {
+    showToast('抽出対象のデータがありません', 'warning');
+    return null;
+  }
+
+  const currentTab = tabs.find(t => t.id === activeTabId);
+  if (!currentTab) return null;
+
+  // 1. 現在表示（絞り込み）されている行データを取得
+  let filteredRows = [];
+  try {
+    if (typeof currentTable.getData === 'function') {
+      filteredRows = currentTable.getData("active");
+    }
+  } catch (e) {
+    console.warn("getData('active') failed:", e);
+  }
+
+  // フォールバック: getRows("active")
+  if (!filteredRows || filteredRows.length === 0) {
+    try {
+      if (typeof currentTable.getRows === 'function') {
+        const rows = currentTable.getRows("active");
+        if (rows && rows.length > 0) {
+          filteredRows = rows.map(r => r.getData());
+        }
+      }
+    } catch (e) {
+      console.warn("getRows('active') failed:", e);
+    }
+  }
+
+  // フィルターがかかっているのにヒット件数が0件の場合、あるいはデータ自体が空の場合
+  if (!filteredRows || filteredRows.length === 0) {
+    const hasSearch = Boolean(searchInput && searchInput.value.trim().length > 0);
+    const hasColFilter = Boolean(activeColumnFilters && activeColumnFilters.size > 0);
+    if (hasSearch || hasColFilter) {
+      showToast('条件に一致する行が0件のため抽出できません', 'warning');
+      return null;
+    }
+    if (currentTab.data && currentTab.data.length > 0) {
+      filteredRows = currentTab.data;
+    } else {
+      showToast('データが空のため抽出できません', 'warning');
+      return null;
+    }
+  }
+
+  // 2. 有効な列定義（fieldを持つ列）を取得
+  const activeCols = (currentTab.columns || []).filter(c => c.field);
+  if (activeCols.length === 0) {
+    showToast('列情報が見つかりません', 'warning');
+    return null;
+  }
+
+  // 3. 列ヘッダー名と新しいTabulatorカラム定義を構築
+  const newHeaders = activeCols.map(c => c.title || `列`);
+  const newColumns = buildTabulatorColumns(newHeaders);
+
+  // 4. 行データを正規化してディープコピー（_id を 1 から連番、フィールドを col_0, col_1... に再マッピング）
+  const newRowData = filteredRows.map((row, idx) => {
+    const newRow = { _id: idx + 1 };
+    activeCols.forEach((col, colIdx) => {
+      newRow[`col_${colIdx}`] = (row[col.field] !== undefined && row[col.field] !== null) ? row[col.field] : '';
+    });
+    return newRow;
+  });
+
+  // 5. 新規タブオブジェクトを構築
+  const newTabName = generateExtractedTabName(currentTab.name);
+  const newTabId = 'tab-' + Date.now() + '-' + Math.random().toString(36).substr(2, 5);
+  const newTab = {
+    id: newTabId,
+    name: newTabName,
+    fileHandle: null, // 別ファイルとして新規保存させるため null
+    rawBytes: null,
+    encoding: currentTab.encoding || 'UTF-8',
+    delimiter: currentTab.delimiter || ',',
+    newline: currentTab.newline || '\r\n',
+    commaMode: currentTab.commaMode || 'keep',
+    headers: newHeaders,
+    columns: newColumns,
+    data: newRowData,
+    isModified: true, // 抽出データとして新規作成（未保存状態）
+    isNew: true
+  };
+
+  // 6. タブを追加してアクティブ化
+  tabs.push(newTab);
+  renderTabs();
+  activateTab(newTab.id);
+
+  // 7. トースト通知
+  const hasSearch = Boolean(searchInput && searchInput.value.trim().length > 0);
+  const hasColFilter = Boolean(activeColumnFilters && activeColumnFilters.size > 0);
+  if (hasSearch || hasColFilter) {
+    showToast(`絞り込み結果 ${newRowData.length} 行を新しいタブ「${newTabName}」に抽出しました`, 'success');
+  } else {
+    showToast(`${newRowData.length} 行を新しいタブ「${newTabName}」に複製・抽出しました`, 'success');
+  }
+
+  return newTab;
 }
 
 // エンコーディング変更ハンドラ（文字コード手動再解釈含む）
@@ -4028,6 +4263,15 @@ function getRowContextMenu() {
     },
     { separator: true },
     {
+      label: "📑 変数名付きで表全体をコピー (Ctrl+Shift+C)",
+      action: () => copyAllWithHeadersToClipboard()
+    },
+    {
+      label: "📑 選択範囲を変数名付きでコピー",
+      action: () => copySelectedWithHeadersToClipboard()
+    },
+    { separator: true },
+    {
       label: "🗑️ この行（または選択中の行）を削除",
       action: (e, row) => deleteRow(row)
     }
@@ -4106,6 +4350,110 @@ function copySelectedCellsToClipboard() {
   } else {
     showToast(`コピーしました (${rowCount}行 × ${colCount}列)`, 'info');
   }
+}
+
+// クリップボード書き込み共通ヘルパー (Web Clipboard API + 内部フォールバック)
+function writeTextToClipboard(text, successToastMsg) {
+  internalClipboardText = text;
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(() => {
+      if (successToastMsg) showToast(successToastMsg, 'success');
+    }).catch(err => {
+      console.warn("Clipboard write failed, using internal buffer:", err);
+      if (successToastMsg) showToast(successToastMsg, 'info');
+    });
+  } else {
+    if (successToastMsg) showToast(successToastMsg, 'info');
+  }
+}
+
+// 表示中の表全体を変数名（列ヘッダー）付きでクリップボードにコピー (TSV形式)
+function copyAllWithHeadersToClipboard() {
+  if (!currentTable || !activeTabId) {
+    showToast('コピー対象のテーブルがありません', 'warning');
+    return;
+  }
+
+  const rows = getAllRows();
+  const cols = getActiveColumns();
+  if (rows.length === 0 || cols.length === 0) {
+    showToast('コピー対象のデータがありません', 'warning');
+    return;
+  }
+
+  // 1. ヘッダー行（変数名）
+  const headerVals = cols.map(c => c.title || '');
+  const lines = [headerVals.join('\t')];
+
+  // 2. 全表示行（フィルター通過後）のデータ
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    if (!row) continue;
+    const rowVals = cols.map(c => {
+      const cell = row.getCell(c.field);
+      const val = cell ? cell.getValue() : '';
+      return val !== null && val !== undefined ? String(val) : '';
+    });
+    lines.push(rowVals.join('\t'));
+  }
+
+  const tsvText = lines.join('\r\n');
+  writeTextToClipboard(tsvText, `変数名付きで全データをコピーしました (${rows.length}行 × ${cols.length}列)`);
+
+  // 全選択ハイライトを表示
+  selectAllCells();
+  copiedRange = {
+    minRow: 0,
+    maxRow: rows.length - 1,
+    minCol: 0,
+    maxCol: cols.length - 1
+  };
+  updateRangeHighlight();
+}
+
+// 選択範囲（または全体）を変数名（列ヘッダー）付きでクリップボードにコピー
+function copySelectedWithHeadersToClipboard() {
+  if (!currentTable || !activeTabId) return;
+
+  const rows = getAllRows();
+  const cols = getActiveColumns();
+  if (rows.length === 0 || cols.length === 0) return;
+
+  // 選択範囲が存在しない、または単一セルのみで範囲指定がない場合は全体をコピー
+  if (!selectionRange || (selectionRange.minRow === selectionRange.maxRow && selectionRange.minCol === selectionRange.maxCol)) {
+    copyAllWithHeadersToClipboard();
+    return;
+  }
+
+  const minRow = Math.max(0, Math.min(selectionRange.minRow, rows.length - 1));
+  const maxRow = Math.max(0, Math.min(selectionRange.maxRow, rows.length - 1));
+  const minCol = Math.max(0, Math.min(selectionRange.minCol, cols.length - 1));
+  const maxCol = Math.max(0, Math.min(selectionRange.maxCol, cols.length - 1));
+
+  // 選択列のヘッダー名
+  const selectedCols = cols.slice(minCol, maxCol + 1);
+  const headerVals = selectedCols.map(c => c.title || '');
+  const lines = [headerVals.join('\t')];
+
+  // 選択行のデータ
+  for (let r = minRow; r <= maxRow; r++) {
+    const row = rows[r];
+    if (!row) continue;
+    const rowVals = selectedCols.map(c => {
+      const cell = row.getCell(c.field);
+      const val = cell ? cell.getValue() : '';
+      return val !== null && val !== undefined ? String(val) : '';
+    });
+    lines.push(rowVals.join('\t'));
+  }
+
+  const tsvText = lines.join('\r\n');
+  const rowCount = maxRow - minRow + 1;
+  const colCount = maxCol - minCol + 1;
+  writeTextToClipboard(tsvText, `変数名付きで選択範囲をコピーしました (${rowCount}行 × ${colCount}列)`);
+
+  copiedRange = { minRow, maxRow, minCol, maxCol };
+  updateRangeHighlight();
 }
 
 // クリップボードからの貼り付け (TSV / CSV展開、Excel互換)
@@ -5232,6 +5580,8 @@ function updateFilterButtonsUI() {
       filterActiveBadge.style.display = 'none';
     }
   }
+
+  updateExtractFilterButtonUI();
 }
 
 // ----------------------------------------------------

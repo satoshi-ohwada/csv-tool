@@ -321,8 +321,29 @@ body {
   background-color: var(--bg-tertiary);
 }
 
-#btn-find-replace {
+#btn-find-replace,
+#btn-extract-filter,
+#btn-copy-all {
   white-space: nowrap;
+}
+
+#btn-extract-filter,
+#btn-copy-all {
+  transition: all 0.15s ease;
+}
+
+#btn-extract-filter:hover,
+#btn-copy-all:hover {
+  background-color: var(--accent-light, #eff6ff);
+  border-color: var(--accent-color, #2563eb);
+  color: var(--accent-color, #2563eb);
+}
+
+#btn-extract-filter.has-filter {
+  background-color: #eff6ff;
+  border-color: #3b82f6;
+  color: #1d4ed8;
+  font-weight: 600;
 }
 
 .settings-group {
@@ -834,6 +855,16 @@ body {
 /* 行番号列ヘッダーセル（左上角） */
 .tabulator-col.tabulator-rownum-cell {
   background-color: #e2e8f0 !important;
+  cursor: pointer !important;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.tabulator-col.tabulator-rownum-cell:hover {
+  background-color: #cbd5e1 !important;
+}
+
+.tabulator-col.tabulator-rownum-cell:hover .tabulator-col-title {
+  color: #1e293b !important;
 }
 
 .tabulator-col.tabulator-rownum-cell .tabulator-col-content {
