@@ -1,0 +1,20 @@
+{
+  "name": "csv-editor-web",
+  "version": "1.0.0",
+  "description": "ブラウザ上で軽快に動作する、Excelライクなタブ式 CSV/TSV エディタ",
+  "main": "app.js",
+  "scripts": {
+    "start": "python3 -m http.server 8765 --bind 127.0.0.1",
+    "test": "node tests/test_search_suite.js && node tests/test_transpose.js && node tests/test_clean.js && node tests/test_delete_row_col.js && node tests/test_navigation.js && node tests/test_save_format.js && node tests/test_date_clean.js"
+  },
+  "keywords": [
+    "csv",
+    "tsv",
+    "editor",
+    "excel",
+    "tabulator",
+    "papaparse"
+  ],
+  "author": "Satoshi Ohwada",
+  "license": "MIT"
+}

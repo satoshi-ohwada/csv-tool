@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CSV編集ツール</title>
+  <link rel="icon" type="image/png" href="icon.png">
+  <link rel="apple-touch-icon" href="icon.png">
+  <link rel="stylesheet" href="lib/tabulator.min.css">
+  <link rel="stylesheet" href="style.css?v=20">
+</head>
+<body>
+  <div id="app">
+    <!-- メインツールバー -->
+    <header class="toolbar">
+      <div class="toolbar-group app-brand" title="CSV編集ツール">
+        <span class="brand-icon">📊</span>
+        <span class="brand-name">CSV編集ツール</span>
+      </div>
+
+      <div class="toolbar-separator"></div>
+
+      <div class="toolbar-group">
+        <button id="btn-new" class="tool-btn" title="新規タブを作成">
+          <span class="icon">📄</span> 新規作成
+        </button>
+        <button id="btn-open" class="tool-btn primary" title="CSV/TSVファイルを開く">
+          <span class="icon">📂</span> 開く
+        </button>
+        <input type="file" id="file-input" accept=".csv,.tsv,.txt" multiple style="display: none;">
+        <button id="btn-save" class="tool-btn" title="ファイルを保存 (Ctrl+S)">
+          <span class="icon">💾</span> 保存
+        </button>
+      </div>
+
+      <div class="toolbar-separator"></div>
+
+      <div class="toolbar-group">
+        <button id="btn-undo" class="tool-btn icon-btn" title="元に戻す (Ctrl+Z)">
+          <span class="icon">↩️</span>
+        </button>
+        <button id="btn-redo" class="tool-btn icon-btn" title="やり直す (Ctrl+Y)">
+          <span class="icon">↪️</span>
+        </button>
+      </div>
+
+      <div class="toolbar-separator"></div>
+
+      <div class="toolbar-group">
+        <button id="btn-add-row" class="tool-btn" title="行を下に追加">
+          <span class="icon">➕</span> 行追加
+        </button>
+        <button id="btn-add-col" class="tool-btn" title="列を右に追加">
+          <span class="icon">➕</span> 列追加
+        </button>
+        <button id="btn-del-row" class="tool-btn danger" title="選択中の行（または末尾の行）を削除">
+          <span class="icon">➖</span> 行削除
+        </button>
+        <button id="btn-del-col" class="tool-btn danger" title="選択中の列（または末尾の列）を削除">
+          <span class="icon">➖</span> 列削除
+        </button>
+      </div>
+
+      <div class="toolbar-separator"></div>
+
+      <div class="toolbar-group">
+        <button id="btn-remove-comma" class="tool-btn" title="表内の数値から3桁カンマを外す (例: 1,234 → 1234)">
+          <span class="icon">🔢</span> カンマ外す
+        </button>
+        <button id="btn-add-comma" class="tool-btn" title="表内の数値に3桁カンマを付ける (例: 1234 → 1,234)">
+          <span class="icon">🔢</span> カンマ付ける
+        </button>
+      </div>
+
+      <div class="toolbar-separator"></div>
+
+      <!-- データ整形ドロップダウン -->
+      <div class="toolbar-group tool-dropdown" id="dropdown-clean-container">
+        <button id="btn-clean-menu" class="tool-btn" title="データの整形・クレンジング">
+          <span class="icon">🧹</span> データ整形 <span style="font-size: 10px;">▼</span>
+        </button>
+        <div id="clean-dropdown-menu" class="dropdown-menu" style="display: none;">
+          <button class="dropdown-item" data-action="trim">
+            <span>✂️</span> 前後の空白を除去 (TRIM)
+          </button>
+          <button class="dropdown-item" data-action="remove_newlines" title="セル内の改行コード (\n, \r) をすべて削除します">
+            <span>⏎</span> セル内の改行を削除
+          </button>
+          <div class="dropdown-separator"></div>
+          <button class="dropdown-item" data-action="format_date_slash" title="日付を YYYY/MM/DD に統一（時刻付きデータは YYYY/MM/DD HH:mm:ss を維持、和暦も西暦化）">
+            <span>📅</span> 日付を統一 (YYYY/MM/DD)
+          </button>
+          <button class="dropdown-item" data-action="format_date_hyphen" title="日付を YYYY-MM-DD に統一（時刻付きデータは YYYY-MM-DD HH:mm:ss を維持、和暦も西暦化）">
+            <span>📅</span> 日付を統一 (YYYY-MM-DD)
+          </button>
+          <button class="dropdown-item" data-action="wareki_to_seireki" title="令和・平成などの和暦（元号）表記を西暦（2026年など）に変換します">
+            <span>🎌</span> 和暦を西暦に変換
+          </button>
+          <button class="dropdown-item" data-action="strip_time_to_date" title="日時データから時刻を切り捨てて年月日（YYYY/MM/DD）のみにします">
+            <span>✂️</span> 時刻を切り捨てて日付のみにする
+          </button>
+          <div class="dropdown-separator"></div>
+          <button class="dropdown-item" data-action="zen2han">
+            <span>🔤</span> 全角英数を半角に変換 (Ａ1 → A1)
+          </button>
+          <button class="dropdown-item" data-action="han2zen">
+            <span>🔤</span> 半角英数を全角に変換 (A1 → Ａ1)
+          </button>
+          <button class="dropdown-item" data-action="kana2zen">
+            <span>🈩</span> 半角カナを全角に変換 (ｶﾀｶﾅ → カタカナ)
+          </button>
+          <div class="dropdown-separator"></div>
+          <button class="dropdown-item" data-action="upper">
+            <span>🔠</span> 大文字に変換 (abc → ABC)
+          </button>
+          <button class="dropdown-item" data-action="lower">
+            <span>🔡</span> 小文字に変換 (ABC → abc)
+          </button>
+          <div class="dropdown-separator"></div>
+          <button class="dropdown-item" data-action="transpose" title="表全体の行と列を入れ替えます (転置)">
+            <span>🔄</span> 行と列を入れ替え (転置)
+          </button>
+        </div>
+      </div>
+
+      <div class="toolbar-separator"></div>
+
+      <!-- クイック絞り込み（フィルター）＆ 置換グループ -->
+      <div class="toolbar-group filter-search-group">
+        <div class="search-group">
+          <span class="search-icon">🔍</span>
+          <input type="text" id="search-input" placeholder="表内を絞り込み (例: (東京 or 大阪) 営業)..." title="表内の行を条件で即座に絞り込みます (スペースでAND, orでOR, ()で優先グループ化, 列名:値, >=数値)">
+          <button id="btn-clear-search" class="tool-btn icon-btn" title="絞り込みをクリア">✕</button>
+        </div>
+        <button id="btn-search-help" class="tool-btn icon-btn" title="検索・絞り込みの書き方ガイド (クリックで開く)">
+          <span class="icon">❓</span>
+        </button>
+        <button id="btn-find-replace" class="tool-btn" title="セル内の文字列を検索して置換 (Ctrl+H / Ctrl+F)">
+          <span class="icon">⇄</span> 置換
+        </button>
+        <div id="filter-active-badge" class="badge-filter" style="display: none;" title="クリックしてフィルターを全解除">
+          <span>🔍 フィルター中</span> <span>✕</span>
+        </div>
+
+        <!-- 検索・絞り込みガイドポップアップ -->
+        <div id="search-help-popup" class="search-help-popup" style="display: none;">
+          <div class="search-help-header">
+            <span class="search-help-title">💡 検索・絞り込みの書き方ガイド</span>
+            <button id="btn-search-help-close" class="modal-close-btn" title="閉じる (Esc)">✕</button>
+          </div>
+          <div class="search-help-body">
+            <p class="search-help-intro">
+              キーワードを入力すると、条件に一致する行だけを瞬時に絞り込みます。<br>
+              複数の言葉の組み合わせや、特定の列・数値を指定して柔軟に検索できます。
+            </p>
+
+            <div class="search-help-section">
+              <!-- AND検索 -->
+              <div class="search-help-item">
+                <div class="search-help-item-header">
+                  <span class="badge-tag tag-and">AND (すべて含む)</span>
+                  <span class="search-help-item-title">スペースで区切る</span>
+                </div>
+                <div class="search-help-desc">
+                  単語と単語を<strong>スペース</strong>（半角または全角）で区切ると、指定したすべての言葉を含む行に絞り込みます。
+                </div>
+                <div class="search-help-code-row">
+                  <span class="search-help-code-label">入力例:</span>
+                  <code class="search-help-code">東京 営業 課長</code>
+                  <span class="search-help-code-note">（3つの語をすべて含む行）</span>
+                </div>
+              </div>
+
+              <!-- OR検索 -->
+              <div class="search-help-item">
+                <div class="search-help-item-header">
+                  <span class="badge-tag tag-or">OR (いずれか)</span>
+                  <span class="search-help-item-title">or またはカンマで区切る</span>
+                </div>
+                <div class="search-help-desc">
+                  単語の間に <strong>or</strong> を挟むか、<strong>カンマ（,）</strong>で区切ると、いずれか1つでも含まれる行を表示します。
+                </div>
+                <div class="search-help-code-row">
+                  <span class="search-help-code-label">入力例:</span>
+                  <code class="search-help-code">東京 or 大阪</code>
+                  <span class="search-help-code-note">（「東京, 大阪」でも同様）</span>
+                </div>
+              </div>
+
+              <!-- グループ化 -->
+              <div class="search-help-item">
+                <div class="search-help-item-header">
+                  <span class="badge-tag tag-group">() 優先判定</span>
+                  <span class="search-help-item-title">括弧で条件をグループ化</span>
+                </div>
+                <div class="search-help-desc">
+                  <strong>()</strong>（半角または全角の括弧）で囲んだ条件を優先して判定します。「AまたはB」のどちらかで、かつ「C」を含む行、といった絞り込みができます。
+                </div>
+                <div class="search-help-code-row">
+                  <span class="search-help-code-label">入力例:</span>
+                  <code class="search-help-code">(東京 or 大阪) 営業</code>
+                  <span class="search-help-code-note">（東京か大阪の営業部）</span>
+                </div>
+              </div>
+
+              <!-- 列指定検索 -->
+              <div class="search-help-item">
+                <div class="search-help-item-header">
+                  <span class="badge-tag tag-col">列指定</span>
+                  <span class="search-help-item-title">特定の列の中だけを検索</span>
+                </div>
+                <div class="search-help-desc">
+                  <strong>列名:探したい言葉</strong> と書くと、その列の中だけを対象に検索します（列名は表の見出し名を指定）。
+                </div>
+                <div class="search-help-code-row">
+                  <span class="search-help-code-label">入力例:</span>
+                  <code class="search-help-code">部署:開発 単価:>=1000</code>
+                  <span class="search-help-code-note">（複数列の指定も可能）</span>
+                </div>
+              </div>
+
+              <!-- 数値比較・範囲 -->
+              <div class="search-help-item">
+                <div class="search-help-item-header">
+                  <span class="badge-tag tag-num">数値条件</span>
+                  <span class="search-help-item-title">大小比較や数値の範囲指定</span>
+                </div>
+                <div class="search-help-desc">
+                  <strong>&gt;=</strong>、<strong>&lt;=</strong>、<strong>数値..数値</strong> を使って、金額や数量を条件で絞り込めます（3桁カンマや円マーク付きセルにも対応）。
+                </div>
+                <div class="search-help-code-row">
+                  <span class="search-help-code-label">入力例:</span>
+                  <code class="search-help-code">単価:>=100000</code>
+                  <span class="search-help-code-note">（10万円以上の行）</span>
+                </div>
+                <div class="search-help-code-row" style="margin-top: 4px;">
+                  <span class="search-help-code-label">入力例:</span>
+                  <code class="search-help-code">数量:10..50</code>
+                  <span class="search-help-code-note">（数量が10〜50の範囲）</span>
+                </div>
+              </div>
+
+              <!-- あいまい検索 -->
+              <div class="search-help-item">
+                <div class="search-help-item-header">
+                  <span class="badge-tag tag-wild">あいまい検索</span>
+                  <span class="search-help-item-title">*（ワイルドカード）で一致</span>
+                </div>
+                <div class="search-help-desc">
+                  <strong>*</strong>（アスタリスク）を使うと、「〜で始まる」「〜で終わる」言葉を探せます。
+                </div>
+                <div class="search-help-code-row">
+                  <span class="search-help-code-label">入力例:</span>
+                  <code class="search-help-code">*パソコン</code>
+                  <span class="search-help-code-note">（語尾が「パソコン」で終わる語）</span>
+                </div>
+              </div>
+
+              <!-- クォートフレーズ -->
+              <div class="search-help-item">
+                <div class="search-help-item-header">
+                  <span class="badge-tag tag-quote">" " フレーズ</span>
+                  <span class="search-help-item-title">空白を含む語句を検索</span>
+                </div>
+                <div class="search-help-desc">
+                  空白（スペース）を含む語句を分割せずにそのまま探したい場合は、<strong>"</strong>（二重引用符）で囲みます。
+                </div>
+                <div class="search-help-code-row">
+                  <span class="search-help-code-label">入力例:</span>
+                  <code class="search-help-code">"New York" 営業</code>
+                  <span class="search-help-code-note">（New Yorkを1単語として扱う）</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <!-- タブバー -->
+    <nav class="tabs-bar">
+      <div id="tabs-container" class="tabs-list">
+        <!-- タブが動的に生成されます -->
+      </div>
+      <button id="btn-add-tab" class="tab-add-btn" title="新規タブ">+</button>
+    </nav>
+
+    <!-- メインコンテンツエリア -->
+    <main class="editor-container" id="editor-container">
+      <div id="table-area"></div>
+
+      <!-- 空状態・ドロッププレースホルダー -->
+      <div id="empty-state" class="empty-state">
+        <div class="empty-icon">📊</div>
+        <h2>CSV / TSV ファイルをドロップ</h2>
+        <p>または下の「ファイルを選択」ボタンをクリックしてください</p>
+        <p class="sub-text">Shift-JIS、UTF-8 の自動判別対応 / 複数ファイル同時オープン可能</p>
+        <label for="file-input" id="btn-empty-open" class="primary-btn">ファイルを選択</label>
+      </div>
+
+      <!-- ドラッグオーバー用レイヤー -->
+      <div id="drop-overlay" class="drop-overlay">
+        <div class="drop-message">
+          <span class="drop-icon">📥</span>
+          <span>ファイルをここにドロップしてください</span>
+        </div>
+      </div>
+    </main>
+
+    <!-- ステータスバー -->
+    <footer class="status-bar">
+      <div class="status-left">
+        <span id="status-filename">ファイルなし</span>
+        <span id="status-modified" class="badge-modified" style="display: none;">● 変更あり</span>
+      </div>
+
+      <!-- 簡易集計エリア (Excel風) -->
+      <div id="status-calc-area" class="status-calc-area">
+        <span class="calc-item">平均: <span id="calc-avg" class="calc-val">0</span></span>
+        <span class="status-pipe">|</span>
+        <span class="calc-item">個数: <span id="calc-count" class="calc-val">0</span></span>
+        <span class="status-pipe">|</span>
+        <span class="calc-item">合計: <span id="calc-sum" class="calc-val">0</span></span>
+      </div>
+
+      <div class="status-right">
+        <span id="status-rows">0 行</span>
+        <span class="status-pipe">|</span>
+        <span id="status-cols">0 列</span>
+        <span class="status-pipe">|</span>
+        <span id="status-encoding">UTF-8</span>
+        <span class="status-pipe">|</span>
+        <span id="status-delimiter">CSV (カンマ)</span>
+        <span class="status-pipe">|</span>
+        <span id="status-newline">CRLF</span>
+      </div>
+    </footer>
+  </div>
+
+  <!-- 検索・置換ダイアログ (Ctrl+H / Ctrl+F) -->
+  <div id="find-replace-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-dialog find-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title">🔍 検索と置換</h3>
+        <button id="btn-find-close" class="modal-close-btn" title="閉じる (Esc)">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="find-form-row">
+          <label class="find-label" for="find-keyword">検索する文字列:</label>
+          <input type="text" id="find-keyword" class="find-input" placeholder="検索ワードを入力...">
+        </div>
+        <div class="find-form-row">
+          <label class="find-label" for="replace-keyword">置換後の文字列:</label>
+          <input type="text" id="replace-keyword" class="find-input" placeholder="置換後の文字列を入力...">
+        </div>
+        <div class="find-options-row">
+          <label><input type="checkbox" id="find-opt-case"> 大文字と小文字を区別する</label>
+          <label><input type="checkbox" id="find-opt-exact"> 完全一致</label>
+          <label><input type="checkbox" id="find-opt-regex"> 正規表現 / ワイルドカード</label>
+        </div>
+        <div class="find-actions">
+          <button id="btn-find-next" class="tool-btn primary">次を検索</button>
+          <button id="btn-replace-one" class="tool-btn">置換</button>
+          <button id="btn-replace-all" class="tool-btn danger">すべて置換</button>
+          <button id="btn-find-cancel" class="tool-btn">閉じる</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- オートフィルター ポップアップ (Excel風) -->
+  <div id="filter-popup" class="filter-popup" style="display: none;">
+    <div class="filter-popup-header">
+      <span id="filter-popup-title" class="filter-popup-title">🔍 列フィルター</span>
+      <button id="btn-filter-popup-close" class="filter-popup-close" title="閉じる">✕</button>
+    </div>
+    <div class="filter-search-wrapper">
+      <input type="text" id="filter-search-box" class="filter-search-input" placeholder="検索 (*, ?, <=100, 100..200)...">
+      <button type="button" id="btn-filter-search-clear" class="filter-search-clear-btn" title="検索条件を解除してすべて選択" style="display: none;">✕</button>
+      <span id="filter-search-count" class="filter-search-count"></span>
+    </div>
+    <div class="filter-search-toolbar">
+      <div class="filter-mode-group" id="filter-mode-group">
+        <button type="button" class="filter-mode-btn active" data-mode="auto" title="自動判定 (通常 / ワイルドカード / 正規表現 / 数値範囲)">自動</button>
+        <button type="button" class="filter-mode-btn" data-mode="wildcard" title="ワイルドカード (*: 0文字以上, ?: 1文字)">*?</button>
+        <button type="button" class="filter-mode-btn" data-mode="regex" title="正規表現 (例: ^202[0-9], (A|B))">.*</button>
+      </div>
+      <button type="button" id="btn-toggle-num-range" class="filter-toggle-num-btn" title="数値範囲指定パネルを開閉">🔢 範囲</button>
+      <div class="filter-quick-btns">
+        <button id="btn-filter-select-all" class="filter-btn-small" title="表示中の項目をすべて選択">すべて選択</button>
+        <button id="btn-filter-clear-all" class="filter-btn-small" title="表示中の項目をすべて解除">すべて解除</button>
+      </div>
+    </div>
+    <div id="filter-add-selection-row" class="filter-add-selection-row" style="display: none;">
+      <label class="filter-add-selection-label">
+        <input type="checkbox" id="filter-add-to-selection"> 現在の選択をフィルターに追加
+      </label>
+    </div>
+    <!-- 数値範囲指定GUIパネル (折りたたみ可能) -->
+    <div id="filter-num-range-panel" class="filter-num-range-panel" style="display: none;">
+      <div class="filter-num-range-row">
+        <input type="number" id="filter-num-min" class="filter-num-input" placeholder="最小 (以上)" step="any">
+        <span class="filter-num-sep">〜</span>
+        <input type="number" id="filter-num-max" class="filter-num-input" placeholder="最大 (以下)" step="any">
+        <button type="button" id="btn-filter-num-apply" class="filter-btn-small primary" title="この範囲内の値を選択">選択</button>
+        <button type="button" id="btn-filter-num-clear" class="filter-btn-small" title="クリア">✕</button>
+      </div>
+    </div>
+    <div id="filter-items-list" class="filter-list">
+      <!-- チェックボックス項目が動的に生成されます -->
+    </div>
+    <div class="filter-actions">
+      <button id="btn-filter-clear-column" class="tool-btn danger" style="padding: 3px 8px; font-size: 11px;">この列を解除</button>
+      <div style="display: flex; gap: 4px;">
+        <button id="btn-filter-apply" class="tool-btn primary" style="padding: 3px 12px; font-size: 11px;">適用</button>
+        <button id="btn-filter-close" class="tool-btn" style="padding: 3px 8px; font-size: 11px;">キャンセル</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 保存ダイアログ（保存設定・保存方法選択） -->
+  <div id="save-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-dialog save-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title">💾 ファイルの保存</h3>
+        <button id="btn-modal-close" class="modal-close-btn" title="閉じる (Esc)">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="modal-desc">「<strong id="modal-filename">ファイル名</strong>」の保存フォーマットと保存方法を選択してください：</p>
+
+        <!-- 保存フォーマット設定エリア（文字コード、区切り、改行、数値形式） -->
+        <div class="save-settings-panel">
+          <div class="save-settings-title">⚙️ 保存フォーマット設定</div>
+          <div class="save-settings-grid">
+            <div class="save-setting-item">
+              <label for="select-encoding" title="保存時の文字コード">文字コード:</label>
+              <select id="select-encoding" class="save-select">
+                <option value="UTF-8">UTF-8 (標準・推奨)</option>
+                <option value="UTF-8-BOM">UTF-8 (BOM付き / Excel用)</option>
+                <option value="Shift_JIS">Shift-JIS (CP932 / 日本語Excel)</option>
+                <option value="EUC-JP">EUC-JP (Unix/Linux)</option>
+              </select>
+            </div>
+
+            <div class="save-setting-item">
+              <label for="select-delimiter" title="保存時の区切り文字">区切り文字:</label>
+              <select id="select-delimiter" class="save-select">
+                <option value=",">カンマ (CSV)</option>
+                <option value="&#9;">タブ (TSV)</option>
+                <option value=";">セミコロン (;)</option>
+              </select>
+            </div>
+
+            <div class="save-setting-item">
+              <label for="select-newline" title="保存時の改行コード">改行コード:</label>
+              <select id="select-newline" class="save-select">
+                <option value="\r\n">CRLF (Windows標準)</option>
+                <option value="\n">LF (Mac / Linux標準)</option>
+              </select>
+            </div>
+
+            <div class="save-setting-item">
+              <label for="select-comma-mode" title="保存時の3桁カンマの扱い">数値形式:</label>
+              <select id="select-comma-mode" class="save-select">
+                <option value="keep">表のまま保存</option>
+                <option value="remove">カンマ外す (クォートなし)</option>
+                <option value="add">カンマ付ける (""あり)</option>
+              </select>
+            </div>
+          </div>
+        </div>
+
+        <!-- 既存ファイル向け保存ボタン群 -->
+        <div id="save-modal-existing-actions" class="save-options">
+          <button id="btn-modal-overwrite" class="save-option-card">
+            <div class="option-icon">💾</div>
+            <div class="option-content">
+              <div class="option-title">上書き保存</div>
+              <div class="option-desc">既存のファイルに直接変更を反映します（連番は付きません）</div>
+            </div>
+          </button>
+          <button id="btn-modal-save-as" class="save-option-card">
+            <div class="option-icon">📋</div>
+            <div class="option-content">
+              <div class="option-title">別名で保存</div>
+              <div class="option-desc">新しいファイル名や保存場所を指定して保存します</div>
+            </div>
+          </button>
+        </div>
+
+        <!-- 新規ファイル向け保存ボタン群 -->
+        <div id="save-modal-new-actions" class="save-options" style="display: none;">
+          <button id="btn-modal-save-new" class="save-option-card primary-card">
+            <div class="option-icon">💾</div>
+            <div class="option-content">
+              <div class="option-title">名前を付けて保存</div>
+              <div class="option-desc">ファイル名と保存場所を指定して保存します</div>
+            </div>
+          </button>
+        </div>
+
+        <div class="save-modal-footer">
+          <button id="btn-modal-cancel" class="tool-btn">キャンセル</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- トースト通知コンテナ -->
+  <div id="toast-container" class="toast-container"></div>
+
+  <!-- スクリプトの読み込み -->
+  <script src="lib/encoding.min.js"></script>
+  <script src="lib/papaparse.min.js"></script>
+  <script src="lib/tabulator.min.js"></script>
+  <script src="app.js?v=28"></script>
+</body>
+</html>
