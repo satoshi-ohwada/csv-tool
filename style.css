@@ -1325,6 +1325,64 @@ body {
   margin: 4px 0;
 }
 
+/* サブメニュー (フライアウト階層メニュー) */
+.dropdown-submenu-item {
+  position: relative;
+  width: 100%;
+}
+
+.dropdown-item.submenu-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 8px 14px;
+}
+
+.submenu-arrow {
+  font-size: 10px;
+  color: #94a3b8;
+  margin-left: auto;
+  padding-left: 10px;
+  transition: transform 0.15s ease;
+}
+
+.dropdown-submenu-item:hover > .submenu-trigger .submenu-arrow {
+  color: #2563eb;
+  transform: translateX(2px);
+}
+
+.dropdown-submenu {
+  display: none;
+  position: absolute;
+  top: -4px;
+  left: 100%;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
+  min-width: 260px;
+  z-index: 1010;
+  padding: 4px 0;
+  flex-direction: column;
+}
+
+/* 親要素と子メニュー間のマウス移動ブリッジ (チラつき防止) */
+.dropdown-submenu::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -8px;
+  width: 8px;
+  height: 100%;
+}
+
+/* ホバーのみで軽快に表示 (クリック固定される focus-within は撤廃) */
+.dropdown-submenu-item:hover > .dropdown-submenu,
+.dropdown-submenu-item.submenu-active > .dropdown-submenu {
+  display: flex;
+}
+
 /* 検索・置換ダイアログ (Excel風) */
 .find-dialog {
   width: 440px;
@@ -1789,5 +1847,71 @@ body {
   font-variant-numeric: tabular-nums;
   color: #0c4a6e;
 }
+
+/* 重複セルのハイライト */
+.tabulator-cell.highlight-duplicate-cell {
+  background-color: #fef3c7 !important;
+  color: #92400e !important;
+  font-weight: 600 !important;
+  border-left: 3px solid #f59e0b !important;
+}
+
+/* 列データ診断サマリーモーダル */
+.summary-modal-content {
+  max-width: 900px !important;
+  max-height: 85vh !important;
+  width: 90% !important;
+  display: flex;
+  flex-direction: column;
+}
+
+.summary-modal-body {
+  overflow-y: auto;
+  margin: 12px 0;
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+}
+
+.summary-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+
+.summary-table th {
+  background-color: #f1f5f9;
+  color: #334155;
+  padding: 8px 12px;
+  border-bottom: 2px solid var(--border-color);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.summary-table td {
+  padding: 8px 12px;
+  border-bottom: 1px solid #e2e8f0;
+  color: var(--text-primary);
+}
+
+.summary-table tr:hover td {
+  background-color: #f8fafc;
+}
+
+.summary-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.summary-badge.type-datetime { background: #e0e7ff; color: #3730a3; }
+.summary-badge.type-number { background: #dcfce7; color: #166534; }
+.summary-badge.type-string { background: #f1f5f9; color: #475569; }
+.summary-badge.badge-warn { background: #fee2e2; color: #991b1b; }
+.summary-badge.badge-ok { background: #ecfdf5; color: #065f46; }
 
 

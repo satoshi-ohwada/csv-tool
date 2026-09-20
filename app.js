@@ -241,17 +241,51 @@ function setupEventListeners() {
     cleanDropdownMenu.addEventListener('click', (e) => {
       const item = e.target.closest('.dropdown-item');
       if (item) {
+        if (item.classList.contains('submenu-trigger')) {
+          e.stopPropagation();
+          item.blur();
+          return;
+        }
         const action = item.getAttribute('data-action');
-        executeDataClean(action);
-        hideCleanDropdown();
+        if (action) {
+          executeDataClean(action);
+          hideCleanDropdown();
+        }
       }
     });
+
+    // マウスホバーでサブメニューを即座に切り替え（前のサブメニューが残るのを防止）
+    const submenuItems = document.querySelectorAll('.dropdown-submenu-item');
+    if (submenuItems && submenuItems.forEach) {
+      submenuItems.forEach(item => {
+        if (item && item.addEventListener) {
+          item.addEventListener('mouseenter', () => {
+            submenuItems.forEach(other => {
+              if (other && other.classList) other.classList.remove('submenu-active');
+            });
+            if (item && item.classList) item.classList.add('submenu-active');
+          });
+        }
+      });
+    }
   }
   window.addEventListener('click', (e) => {
     if (cleanDropdownMenu && !cleanDropdownMenu.contains(e.target) && e.target !== btnCleanMenu) {
       hideCleanDropdown();
     }
   });
+
+  // 列データ診断サマリーモーダル
+  const btnSummaryClose = document.getElementById('btn-summary-close');
+  const btnSummaryCloseX = document.getElementById('btn-summary-close-x');
+  const modalColumnSummary = document.getElementById('modal-column-summary');
+  if (btnSummaryClose) btnSummaryClose.addEventListener('click', hideColumnSummaryModal);
+  if (btnSummaryCloseX) btnSummaryCloseX.addEventListener('click', hideColumnSummaryModal);
+  if (modalColumnSummary) {
+    modalColumnSummary.addEventListener('click', (e) => {
+      if (e.target === modalColumnSummary) hideColumnSummaryModal();
+    });
+  }
 
   // 検索・置換モーダル
   if (btnFindReplace) {
@@ -545,6 +579,11 @@ function handleGlobalKeydown(e) {
 
   // Escape (入力モードキャンセル→表示モード復帰、各種モーダル・ポップアップ・コピー点線解除)
   if (e.key === 'Escape') {
+    const modalColSummary = document.getElementById('modal-column-summary');
+    if (modalColSummary && modalColSummary.style.display !== 'none') {
+      hideColumnSummaryModal();
+      return;
+    }
     if (findReplaceModal && findReplaceModal.style.display !== 'none') {
       closeFindReplaceModal();
       return;
@@ -2078,6 +2117,23 @@ function getHeaderContextMenu() {
     {
       label: "🔢 この列にカンマを付ける (1234 → 1,234)",
       action: (e, column) => addCommasToColumn(column)
+    },
+    { separator: true },
+    {
+      label: "📅 この列の日時・日付を統一 (YYYY-MM-DD)",
+      action: (e, column) => cleanSpecificColumn(column, 'format_date_hyphen')
+    },
+    {
+      label: "🔍 この列の重複値をハイライト",
+      action: (e, column) => highlightDuplicatesInColumn(column)
+    },
+    {
+      label: "⚪ この列の欠測表記を空セルに統一",
+      action: (e, column) => cleanSpecificColumn(column, 'na_to_empty')
+    },
+    {
+      label: "🏷️ この列の数値単位記号を除去",
+      action: (e, column) => cleanSpecificColumn(column, 'strip_units')
     },
     { separator: true },
     {
@@ -5189,7 +5245,15 @@ function toggleCleanDropdown() {
 }
 
 function hideCleanDropdown() {
-  if (cleanDropdownMenu) cleanDropdownMenu.style.display = 'none';
+  if (cleanDropdownMenu) {
+    cleanDropdownMenu.style.display = 'none';
+    const submenuItems = document.querySelectorAll('.dropdown-submenu-item');
+    if (submenuItems && submenuItems.forEach) {
+      submenuItems.forEach(item => {
+        if (item && item.classList) item.classList.remove('submenu-active');
+      });
+    }
+  }
 }
 
 function zenkakuToHankaku(str) {
@@ -5271,7 +5335,13 @@ function isValidDate(y, m, d) {
   return d <= daysInMonth[m - 1];
 }
 
-// 和暦表記を西暦テキストに置換（例: 令和8年9月20日 → 2026年9月20日, R8.9.20 → 2026.9.20）
+// 2桁年 (YY) を4桁西暦 (YYYY) に補正
+function normalizeTwoDigitYear(y) {
+  if (y >= 100) return y;
+  return y >= 70 ? 1900 + y : 2000 + y;
+}
+
+// 和暦表記を西暦テキストに置換（例: 令和8年9月20日 → 2026年9月20日, 令和8年9月 → 2026年9月, R8.9.20 → 2026.9.20）
 function convertWarekiToSeirekiText(str) {
   if (typeof str !== 'string' || !str) return str;
   let res = str;
@@ -5285,7 +5355,7 @@ function convertWarekiToSeirekiText(str) {
     return `${seirekiYear}年`;
   });
 
-  // 2. アルファベット・記号略記: R8.9.20 / H31/4/30 / S60-1-15 / R08.09.20
+  // 2. アルファベット・記号略記: R8.9.20 / H31/4/30 / S60-1-15 / R08.09.20 / R8.9
   res = res.replace(/\b([RrHhSsTtMm])\s*(\d{1,2})([./\-])/g, (match, eraKey, numStr, sep) => {
     const base = ERA_OFFSETS[eraKey];
     if (!base) return match;
@@ -5297,7 +5367,7 @@ function convertWarekiToSeirekiText(str) {
   return res;
 }
 
-// 日付・時刻文字列のパース
+// 日付・時刻文字列のパース（粒度自動判定: time_only, datetime, date, year_month）
 function parseDateTimeString(rawStr) {
   if (typeof rawStr !== 'string' && typeof rawStr !== 'number') {
     return { isValid: false };
@@ -5305,7 +5375,52 @@ function parseDateTimeString(rawStr) {
   const str = String(rawStr).trim();
   if (!str) return { isValid: false };
 
-  // まず和暦を西暦に変換した文字列を用意
+  // 1. まず純粋な時刻のみ (time_only) か判定
+  // 例: "14:30:15", "14:30", "9:05", "14時30分15秒", "14時30分", "午後2:30", "2:30 PM"
+  const pureTimeColon = str.match(/^(?:([+-]?\d+)\s*)?^(?:(午前|午後)\s*)?(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?(?:\.\d+)?(?:\s*(AM|PM|午前|午後))?$/i);
+  const pureTimeJp = str.match(/^(?:(午前|午後)\s*)?(\d{1,2})時\s*(\d{1,2})分(?:\s*(\d{1,2})秒)?$/);
+
+  if (pureTimeColon) {
+    let h = parseInt(pureTimeColon[3], 10);
+    const m = parseInt(pureTimeColon[4], 10);
+    const s = pureTimeColon[5] ? parseInt(pureTimeColon[5], 10) : 0;
+    const ap = (pureTimeColon[2] || pureTimeColon[6] || '').toUpperCase();
+    if (ap === 'PM' || ap === '午後') {
+      if (h < 12) h += 12;
+    } else if (ap === 'AM' || ap === '午前') {
+      if (h === 12) h = 0;
+    }
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59 && s >= 0 && s <= 59) {
+      return {
+        isValid: true,
+        granularity: 'time_only',
+        hours: h,
+        minutes: m,
+        seconds: s
+      };
+    }
+  } else if (pureTimeJp) {
+    let h = parseInt(pureTimeJp[2], 10);
+    const m = parseInt(pureTimeJp[3], 10);
+    const s = pureTimeJp[4] ? parseInt(pureTimeJp[4], 10) : 0;
+    const ap = pureTimeJp[1] || '';
+    if (ap === '午後') {
+      if (h < 12) h += 12;
+    } else if (ap === '午前') {
+      if (h === 12) h = 0;
+    }
+    if (h >= 0 && h <= 23 && m >= 0 && m <= 59 && s >= 0 && s <= 59) {
+      return {
+        isValid: true,
+        granularity: 'time_only',
+        hours: h,
+        minutes: m,
+        seconds: s
+      };
+    }
+  }
+
+  // 2. 和暦を西暦に変換
   const normalizedStr = convertWarekiToSeirekiText(str);
 
   let remaining = normalizedStr;
@@ -5314,8 +5429,7 @@ function parseDateTimeString(rawStr) {
   let minutes = 0;
   let seconds = 0;
 
-  // 1. 時刻の抽出（末尾の時刻表記）
-  // 例: " 14:30:15", " 14:30", "T14:30:00Z", " 14時30分15秒", " 9:05 AM", " 午後2:30"
+  // 末尾の時刻表記の抽出
   const timeJpMatch = remaining.match(/\s+(\d{1,2})時\s*(\d{1,2})分(?:\s*(\d{1,2})秒)?$/);
   const timeColonMatch = remaining.match(/(?:[T\s]+)(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?(?:\.\d+)?(?:\s*(AM|PM|午前|午後))?(?:Z|[+-]\d{2}:?\d{2})?$/i);
 
@@ -5345,87 +5459,203 @@ function parseDateTimeString(rawStr) {
     }
   }
 
-  // 2. 日付の抽出
-  let year = 0, month = 0, day = 0;
-  let dateMatched = false;
-
-  // パターンA: YYYY/MM/DD, YYYY-MM-DD, YYYY.MM.DD
-  const sepMatch = remaining.match(/^(\d{4})[\/\.\-](\d{1,2})[\/\.\-](\d{1,2})$/);
-  // パターンB: YYYY年MM月DD日
-  const kanjiMatch = remaining.match(/^(\d{4})年\s*(\d{1,2})月\s*(\d{1,2})日?$/);
-  // パターンC: 8桁連続数値 (例: 20260920)
+  // 3. 日付（年月日）の抽出
+  // パターンA: YYYY/MM/DD, YYYY-MM-DD, YYYY.MM.DD または YY/MM/DD
+  const sepMatch = remaining.match(/^(\d{2,4})[\/\.\-](\d{1,2})[\/\.\-](\d{1,2})$/);
+  // パターンB: YYYY年MM月DD日 または YY年MM月DD日
+  const kanjiMatch = remaining.match(/^(\d{2,4})年\s*(\d{1,2})月\s*(\d{1,2})日?$/);
+  // パターンC: 8桁連続数値 (例: 20260920) ※時刻がない場合のみ
   const eightDigitMatch = remaining.match(/^(\d{4})(\d{2})(\d{2})$/);
-  // パターンD: 2桁年 (YY/MM/DD, YY-MM-DD, YY.MM.DD)
-  const shortYearMatch = remaining.match(/^(\d{2})[\/\.\-](\d{1,2})[\/\.\-](\d{1,2})$/);
 
   if (sepMatch) {
-    year = parseInt(sepMatch[1], 10);
-    month = parseInt(sepMatch[2], 10);
-    day = parseInt(sepMatch[3], 10);
-    dateMatched = true;
-  } else if (kanjiMatch) {
-    year = parseInt(kanjiMatch[1], 10);
-    month = parseInt(kanjiMatch[2], 10);
-    day = parseInt(kanjiMatch[3], 10);
-    dateMatched = true;
-  } else if (eightDigitMatch && !hasTime) {
-    year = parseInt(eightDigitMatch[1], 10);
-    month = parseInt(eightDigitMatch[2], 10);
-    day = parseInt(eightDigitMatch[3], 10);
-    dateMatched = true;
-  } else if (shortYearMatch) {
-    const rawY = parseInt(shortYearMatch[1], 10);
-    // 2000年代補正 (例: 26 -> 2026, 99 -> 1999)
-    year = rawY >= 70 ? 1900 + rawY : 2000 + rawY;
-    month = parseInt(shortYearMatch[2], 10);
-    day = parseInt(shortYearMatch[3], 10);
-    dateMatched = true;
+    const rawY = parseInt(sepMatch[1], 10);
+    const y = normalizeTwoDigitYear(rawY);
+    const m = parseInt(sepMatch[2], 10);
+    const d = parseInt(sepMatch[3], 10);
+    if (isValidDate(y, m, d)) {
+      return {
+        isValid: true,
+        granularity: hasTime ? 'datetime' : 'date',
+        year: y,
+        month: m,
+        day: d,
+        hours,
+        minutes,
+        seconds
+      };
+    }
   }
 
-  if (!dateMatched || !isValidDate(year, month, day)) {
-    return { isValid: false };
+  if (kanjiMatch) {
+    const rawY = parseInt(kanjiMatch[1], 10);
+    const y = normalizeTwoDigitYear(rawY);
+    const m = parseInt(kanjiMatch[2], 10);
+    const d = parseInt(kanjiMatch[3], 10);
+    if (isValidDate(y, m, d)) {
+      return {
+        isValid: true,
+        granularity: hasTime ? 'datetime' : 'date',
+        year: y,
+        month: m,
+        day: d,
+        hours,
+        minutes,
+        seconds
+      };
+    }
   }
 
-  return {
-    isValid: true,
-    year,
-    month,
-    day,
-    hasTime,
-    hours,
-    minutes,
-    seconds
-  };
+  if (eightDigitMatch && !hasTime) {
+    const y = parseInt(eightDigitMatch[1], 10);
+    const m = parseInt(eightDigitMatch[2], 10);
+    const d = parseInt(eightDigitMatch[3], 10);
+    if (isValidDate(y, m, d)) {
+      return {
+        isValid: true,
+        granularity: 'date',
+        year: y,
+        month: m,
+        day: d,
+        hours: 0,
+        minutes: 0,
+        seconds: 0
+      };
+    }
+  }
+
+  // 4. 年月（日なし）の抽出 (月次統計データ)
+  // 例: "2026/9", "2026-9", "2026.9", "2026年9月", "26/9", "26-9", "26年9月"
+  if (!hasTime) {
+    const ymSepMatch = remaining.match(/^(\d{2,4})[\/\.\-](\d{1,2})$/);
+    const ymKanjiMatch = remaining.match(/^(\d{2,4})年\s*(\d{1,2})月$/);
+
+    if (ymSepMatch) {
+      const rawY = parseInt(ymSepMatch[1], 10);
+      const y = normalizeTwoDigitYear(rawY);
+      const m = parseInt(ymSepMatch[2], 10);
+      if (y >= 1868 && y <= 2150 && m >= 1 && m <= 12) {
+        return {
+          isValid: true,
+          granularity: 'year_month',
+          year: y,
+          month: m,
+          day: 0,
+          hours: 0,
+          minutes: 0,
+          seconds: 0
+        };
+      }
+    }
+
+    if (ymKanjiMatch) {
+      const rawY = parseInt(ymKanjiMatch[1], 10);
+      const y = normalizeTwoDigitYear(rawY);
+      const m = parseInt(ymKanjiMatch[2], 10);
+      if (y >= 1868 && y <= 2150 && m >= 1 && m <= 12) {
+        return {
+          isValid: true,
+          granularity: 'year_month',
+          year: y,
+          month: m,
+          day: 0,
+          hours: 0,
+          minutes: 0,
+          seconds: 0
+        };
+      }
+    }
+  }
+
+  return { isValid: false };
 }
 
-// 日付整形: YYYY/MM/DD (時刻ありなら YYYY/MM/DD HH:mm:ss)
-function formatToSlashDate(str) {
-  const parsed = parseDateTimeString(str);
-  if (!parsed.isValid) return str;
-  const dStr = `${parsed.year}/${pad2(parsed.month)}/${pad2(parsed.day)}`;
-  if (parsed.hasTime) {
-    return `${dStr} ${pad2(parsed.hours)}:${pad2(parsed.minutes)}:${pad2(parsed.seconds)}`;
-  }
-  return dStr;
-}
-
-// 日付整形: YYYY-MM-DD (時刻ありなら YYYY-MM-DD HH:mm:ss)
+// 日付・日時・年月・時刻のハイフン形式統一 (基本形式: YYYY-MM-DD [hh:mm:ss])
 function formatToHyphenDate(str) {
-  const parsed = parseDateTimeString(str);
-  if (!parsed.isValid) return str;
-  const dStr = `${parsed.year}-${pad2(parsed.month)}-${pad2(parsed.day)}`;
-  if (parsed.hasTime) {
-    return `${dStr} ${pad2(parsed.hours)}:${pad2(parsed.minutes)}:${pad2(parsed.seconds)}`;
+  const p = parseDateTimeString(str);
+  if (!p.isValid) return str;
+
+  if (p.granularity === 'time_only') {
+    return `${pad2(p.hours)}:${pad2(p.minutes)}:${pad2(p.seconds)}`;
   }
-  return dStr;
+  if (p.granularity === 'year_month') {
+    return `${p.year}-${pad2(p.month)}`;
+  }
+  if (p.granularity === 'date') {
+    return `${p.year}-${pad2(p.month)}-${pad2(p.day)}`;
+  }
+  if (p.granularity === 'datetime') {
+    return `${p.year}-${pad2(p.month)}-${pad2(p.day)} ${pad2(p.hours)}:${pad2(p.minutes)}:${pad2(p.seconds)}`;
+  }
+  return str;
 }
 
-// 時刻切り捨て: 常に YYYY/MM/DD
-function stripTimeToDate(str) {
-  const parsed = parseDateTimeString(str);
-  if (!parsed.isValid) return str;
-  return `${parsed.year}/${pad2(parsed.month)}/${pad2(parsed.day)}`;
+// 日付・日時・年月・時刻のスラッシュ形式統一 (YYYY/MM/DD [hh:mm:ss])
+function formatToSlashDate(str) {
+  const p = parseDateTimeString(str);
+  if (!p.isValid) return str;
+
+  if (p.granularity === 'time_only') {
+    return `${pad2(p.hours)}:${pad2(p.minutes)}:${pad2(p.seconds)}`;
+  }
+  if (p.granularity === 'year_month') {
+    return `${p.year}/${pad2(p.month)}`;
+  }
+  if (p.granularity === 'date') {
+    return `${p.year}/${pad2(p.month)}/${pad2(p.day)}`;
+  }
+  if (p.granularity === 'datetime') {
+    return `${p.year}/${pad2(p.month)}/${pad2(p.day)} ${pad2(p.hours)}:${pad2(p.minutes)}:${pad2(p.seconds)}`;
+  }
+  return str;
 }
+
+// 欠測値表記を空セルに統一 (NA, null, NaN等 → 空欄)
+// ※ 0 や 0.0、秘匿記号 x は絶対に保持
+function normalizeMissingToEmpty(str) {
+  if (typeof str !== 'string' && typeof str !== 'number') return str;
+  const trimmed = String(str).trim();
+  if (trimmed === '') return '';
+
+  // 0, 0.0, 0.00 などの数値0は絶対に保護
+  if (/^[-+]?0(?:\.0+)?$/.test(trimmed)) return str;
+
+  // 秘匿記号 x, X は絶対に保護
+  if (trimmed === 'x' || trimmed === 'X') return str;
+
+  // 欠測値パターン: NA, N/A, n/a, NaN, null, NULL, none, None, #N/A, #VALUE!, ND, nd
+  if (/^(NA|N\/A|NaN|null|none|#N\/A|#VALUE!|ND)$/i.test(trimmed)) {
+    return '';
+  }
+  return str;
+}
+
+// 数値末尾の単位記号を除去 (例: 12.5% → 12.5, 1,200円 → 1200, 150kg → 150)
+function stripUnitsFromNumber(str) {
+  if (typeof str !== 'string' && typeof str !== 'number') return str;
+  const trimmed = String(str).trim();
+  if (trimmed === '') return str;
+
+  // 秘匿記号 x, X は保護
+  if (trimmed === 'x' || trimmed === 'X') return str;
+
+  // 数値 + 単位記号
+  const unitMatch = trimmed.match(/^([+-]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?)\s*(%|％|円|千円|百万円|万円|人|kg|g|t|m|cm|mm|km|℃|度|個|件|台|点|本|枚|回|歳|才)$/);
+  if (unitMatch) {
+    return unitMatch[1].replace(/,/g, '');
+  }
+  return str;
+}
+
+// 数値の3桁カンマを除去 (1,000 → 1000)
+function removeCommasFromNumber(str) {
+  if (typeof str !== 'string' && typeof str !== 'number') return str;
+  const trimmed = String(str).trim();
+  if (/^[+-]?(?:\d{1,3}(?:,\d{3})+)(?:\.\d+)?$/.test(trimmed)) {
+    return trimmed.replace(/,/g, '');
+  }
+  return str;
+}
+
 
 // 表全体の行と列を入れ替え（転置: Transpose）
 function transposeCurrentTable() {
@@ -5523,13 +5753,290 @@ function transposeCurrentTable() {
   showToast(`行と列を入れ替えました (${oldRowCount}行×${oldColCount}列 → ${transposedMatrix.length}行×${newHeaders.length}列)`, 'success');
 }
 
+// 特定の列にデータクレンジングを適用
+function cleanSpecificColumn(column, action) {
+  if (!currentTable || !activeTabId) return;
+  const tab = tabs.find(t => t.id === activeTabId);
+  if (!tab) return;
+  const field = column.getField();
+  const title = column.getDefinition().title || field;
+
+  let changedCount = 0;
+  const rows = currentTable.getRows();
+  rows.forEach(r => {
+    const data = r.getData();
+    const original = data[field];
+    if (original !== null && original !== undefined) {
+      const str = String(original);
+      const updated = applyCleanTransformation(str, action);
+      if (original !== updated) {
+        data[field] = updated;
+        changedCount++;
+      }
+    }
+    r.update(data);
+  });
+
+  if (changedCount > 0) {
+    tab.isModified = true;
+    syncCurrentTabData();
+    renderTabs();
+    updateStatusBar(tab);
+    showToast(`列「${title}」の ${changedCount} セルをクレンジングしました`, 'success');
+  } else {
+    showToast(`列「${title}」に変更対象のデータはありませんでした`, 'info');
+  }
+}
+
+// 重複ハイライト管理
+let highlightedColumnField = null;
+
+function clearDuplicateHighlights() {
+  if (typeof document === 'undefined') return;
+  const cells = document.querySelectorAll('.highlight-duplicate-cell');
+  cells.forEach(el => el.classList.remove('highlight-duplicate-cell'));
+  highlightedColumnField = null;
+}
+
+function highlightDuplicatesInColumn(column) {
+  if (!currentTable || !activeTabId) return;
+  const tab = tabs.find(t => t.id === activeTabId);
+  if (!tab) return;
+
+  const field = typeof column === 'string' ? column : column.getField();
+  const colDef = tab.columns.find(c => c.field === field);
+  const colTitle = colDef ? colDef.title : field;
+
+  // すでに同じ列がハイライトされている場合はトグル解除
+  if (highlightedColumnField === field) {
+    clearDuplicateHighlights();
+    showToast(`列「${colTitle}」の重複ハイライトを解除しました`, 'info');
+    return;
+  }
+
+  clearDuplicateHighlights();
+
+  const rows = currentTable.getRows();
+  const valueCounts = {};
+
+  // 1. 各値の出現回数をカウント（空文字は除外）
+  rows.forEach(r => {
+    const val = r.getData()[field];
+    if (val !== null && val !== undefined) {
+      const str = String(val).trim();
+      if (str !== '') {
+        valueCounts[str] = (valueCounts[str] || 0) + 1;
+      }
+    }
+  });
+
+  // 重複値（2回以上出現）のセット
+  const duplicateValues = new Set(
+    Object.keys(valueCounts).filter(val => valueCounts[val] > 1)
+  );
+
+  let duplicateCellCount = 0;
+
+  if (duplicateValues.size === 0) {
+    showToast(`列「${colTitle}」に重複値はありませんでした`, 'info');
+    return;
+  }
+
+  // 2. 重複セルにクラスを付与
+  rows.forEach(r => {
+    const val = r.getData()[field];
+    if (val !== null && val !== undefined) {
+      const str = String(val).trim();
+      if (duplicateValues.has(str)) {
+        const cell = r.getCell(field);
+        if (cell) {
+          const el = cell.getElement();
+          if (el) {
+            el.classList.add('highlight-duplicate-cell');
+            duplicateCellCount++;
+          }
+        }
+      }
+    }
+  });
+
+  highlightedColumnField = field;
+  showToast(`列「${colTitle}」で ${duplicateValues.size} 種類の重複値 (${duplicateCellCount} セル) を強調表示しました（再実行で解除）`, 'warning');
+}
+
+function highlightDuplicatesInSelectedColumn() {
+  if (!currentTable || !activeTabId) return;
+  const tab = tabs.find(t => t.id === activeTabId);
+  if (!tab) return;
+
+  let targetField = null;
+  if (activeFocusCell && activeFocusCell.colField) {
+    targetField = activeFocusCell.colField;
+  } else {
+    const ranges = typeof currentTable.getRanges === 'function' ? currentTable.getRanges() : [];
+    if (ranges && ranges.length > 0) {
+      const cells = ranges[0].getCells();
+      if (cells && cells.length > 0) {
+        targetField = cells[0].getField();
+      }
+    }
+  }
+
+  if (!targetField) {
+    const activeCols = tab.columns.filter(c => c.field);
+    if (activeCols.length > 0) {
+      targetField = activeCols[0].field;
+    }
+  }
+
+  if (!targetField) {
+    showToast('重複チェックを行う列を選択してください', 'info');
+    return;
+  }
+
+  highlightDuplicatesInColumn(targetField);
+}
+
+// 列データ診断サマリーモーダル
+function showColumnSummaryModal() {
+  if (!currentTable || !activeTabId) return;
+  const tab = tabs.find(t => t.id === activeTabId);
+  if (!tab) return;
+
+  syncCurrentTabData();
+
+  const tbody = document.getElementById('summary-table-tbody');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  const activeCols = tab.columns.filter(c => c.field);
+  const rows = tab.data || [];
+  const totalRows = rows.length;
+
+  activeCols.forEach(col => {
+    const field = col.field;
+    const title = col.title || field;
+
+    let emptyCount = 0;
+    let naCount = 0;
+    let confidentialCount = 0;
+    let zeroCount = 0;
+    let validCount = 0;
+
+    let numCount = 0;
+    let numSum = 0;
+    let numMin = Infinity;
+    let numMax = -Infinity;
+
+    let dateCount = 0;
+    const valueMap = {};
+
+    rows.forEach(r => {
+      const val = r[field];
+      if (val === null || val === undefined || String(val).trim() === '') {
+        emptyCount++;
+        return;
+      }
+      const str = String(val).trim();
+      valueMap[str] = (valueMap[str] || 0) + 1;
+
+      if (/^(NA|N\/A|NaN|null|none|#N\/A|#VALUE!|ND)$/i.test(str)) {
+        naCount++;
+      } else if (str === 'x' || str === 'X') {
+        confidentialCount++;
+        validCount++;
+      } else if (/^[-+]?0(?:\.0+)?$/.test(str)) {
+        zeroCount++;
+        validCount++;
+        numCount++;
+        if (0 < numMin) numMin = 0;
+        if (0 > numMax) numMax = 0;
+      } else {
+        validCount++;
+
+        const cleanNumStr = str.replace(/,/g, '');
+        if (/^[+-]?(?:\d+)(?:\.\d+)?$/.test(cleanNumStr)) {
+          const numVal = parseFloat(cleanNumStr);
+          numCount++;
+          numSum += numVal;
+          if (numVal < numMin) numMin = numVal;
+          if (numVal > numMax) numMax = numVal;
+        }
+
+        const dateCheck = parseDateTimeString(str);
+        if (dateCheck.isValid) {
+          dateCount++;
+        }
+      }
+    });
+
+    const totalMissing = emptyCount + naCount;
+    const missingRate = totalRows > 0 ? ((totalMissing / totalRows) * 100).toFixed(1) : '0.0';
+
+    let inferredType = '文字列';
+    let typeClass = 'type-string';
+    if (validCount > 0) {
+      if (dateCount / validCount >= 0.6) {
+        inferredType = '日付/日時';
+        typeClass = 'type-datetime';
+      } else if (numCount / validCount >= 0.6) {
+        inferredType = '数値';
+        typeClass = 'type-number';
+      }
+    }
+
+    let duplicateTypes = 0;
+    Object.keys(valueMap).forEach(k => {
+      if (valueMap[k] > 1) duplicateTypes++;
+    });
+
+    let rangeText = '-';
+    if (numCount > 0 && numMin !== Infinity && numMax !== -Infinity) {
+      const avg = (numSum / numCount).toFixed(2);
+      rangeText = `${numMin} 〜 ${numMax} (平均: ${avg})`;
+    }
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><strong>${escapeHtml(title)}</strong></td>
+      <td><span class="summary-badge ${typeClass}">${inferredType}</span></td>
+      <td>${totalRows} 行</td>
+      <td>
+        ${totalMissing} 件 (${missingRate}%)
+        ${totalMissing > 0 ? (missingRate > 20 ? '<span class="summary-badge badge-warn">欠測多</span>' : '') : '<span class="summary-badge badge-ok">完全</span>'}
+      </td>
+      <td>${confidentialCount > 0 ? `<span class="summary-badge badge-warn">${confidentialCount} 件</span>` : '0 件'}</td>
+      <td>${zeroCount} 件</td>
+      <td><small style="font-variant-numeric: tabular-nums;">${rangeText}</small></td>
+      <td>
+        ${duplicateTypes > 0 ? `<span class="summary-badge badge-warn">${duplicateTypes} 種類の重複</span>` : '<span class="summary-badge badge-ok">一意</span>'}
+      </td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  const modal = document.getElementById('modal-column-summary');
+  if (modal) {
+    modal.style.display = 'flex';
+  }
+}
+
+function hideColumnSummaryModal() {
+  const modal = document.getElementById('modal-column-summary');
+  if (modal) {
+    modal.style.display = 'none';
+  }
+}
+
 function applyCleanTransformation(str, action) {
   if (action === 'trim') return trimSpaces(str);
   if (action === 'remove_newlines') return removeNewlines(str);
-  if (action === 'format_date_slash') return formatToSlashDate(str);
   if (action === 'format_date_hyphen') return formatToHyphenDate(str);
+  if (action === 'format_date_slash') return formatToSlashDate(str);
   if (action === 'wareki_to_seireki') return convertWarekiToSeirekiText(str);
-  if (action === 'strip_time_to_date') return stripTimeToDate(str);
+  if (action === 'na_to_empty') return normalizeMissingToEmpty(str);
+  if (action === 'strip_units') return stripUnitsFromNumber(str);
+  if (action === 'remove_commas') return removeCommasFromNumber(str);
   if (action === 'zen2han') return zenkakuToHankaku(str);
   if (action === 'han2zen') return hankakuToZenkaku(str);
   if (action === 'kana2zen') return hankakuKanaToZenkaku(str);
@@ -5543,6 +6050,16 @@ function executeDataClean(action) {
 
   if (action === 'transpose') {
     transposeCurrentTable();
+    return;
+  }
+
+  if (action === 'highlight_duplicates') {
+    highlightDuplicatesInSelectedColumn();
+    return;
+  }
+
+  if (action === 'column_summary') {
+    showColumnSummaryModal();
     return;
   }
 
@@ -5601,14 +6118,18 @@ function executeDataClean(action) {
     let detail = `${changedCount} セルを変換しました`;
     if (action === 'remove_newlines') {
       detail = `${changedCount} セルから改行を削除しました`;
-    } else if (action === 'format_date_slash' || action === 'format_date_hyphen') {
-      detail = `${changedCount} セルの日付・時刻を統一しました`;
+    } else if (action === 'format_date_hyphen' || action === 'format_date_slash') {
+      detail = `${changedCount} セルの日付・日時・年月を統一しました`;
     } else if (action === 'wareki_to_seireki') {
       detail = `${changedCount} セルの和暦を西暦に変換しました`;
-    } else if (action === 'strip_time_to_date') {
-      detail = `${changedCount} セルから時刻を切り捨てて日付のみに統一しました`;
+    } else if (action === 'na_to_empty') {
+      detail = `${changedCount} セルの欠測値表記を空セルに統一しました`;
+    } else if (action === 'strip_units') {
+      detail = `${changedCount} セルから数値の単位記号を除去しました`;
+    } else if (action === 'remove_commas') {
+      detail = `${changedCount} セルの数値から3桁カンマを外しました`;
     }
-    showToast(`データ整形完了: ${detail}`, 'success');
+    showToast(`データクレンジング完了: ${detail}`, 'success');
   } else {
     showToast('変換対象のデータはありませんでした', 'info');
   }
