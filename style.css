@@ -1945,4 +1945,46 @@ body {
 .summary-badge.badge-warn { background: #fee2e2; color: #991b1b; }
 .summary-badge.badge-ok { background: #ecfdf5; color: #065f46; }
 
+/* ====================================================
+   右クリック・コンテキストメニューの洗練されたUIスタイル
+   ==================================================== */
+.tabulator-menu {
+  border: 1px solid #cbd5e1 !important;
+  border-radius: 8px !important;
+  background-color: #ffffff !important;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.15), 0 8px 10px -6px rgba(0, 0, 0, 0.1) !important;
+  padding: 6px 0 !important;
+  font-family: inherit !important;
+  font-size: 13px !important;
+  z-index: 100000 !important;
+  min-width: 210px;
+}
+
+.tabulator-menu .tabulator-menu-item {
+  padding: 7px 16px !important;
+  color: #1e293b !important;
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
+  transition: background-color 0.1s ease, color 0.1s ease;
+  line-height: 1.4 !important;
+}
+
+.tabulator-menu .tabulator-menu-item:not(.tabulator-menu-item-disabled):hover {
+  background-color: #f1f5f9 !important;
+  color: #0f172a !important;
+  cursor: pointer;
+}
+
+.tabulator-menu .tabulator-menu-separator {
+  margin: 5px 0 !important;
+  border-top: 1px solid #e2e8f0 !important;
+}
+
+.tabulator-menu .tabulator-menu-item.tabulator-menu-item-disabled {
+  opacity: 0.4 !important;
+  cursor: not-allowed !important;
+}
+
+
 

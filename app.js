@@ -23,7 +23,7 @@ let filterAddSelectionRow, filterAddToSelection, btnFilterSearchClear, filterSea
 let btnToggleNumRange, filterNumRangePanel, filterNumMin, filterNumMax, btnFilterNumApply, btnFilterNumClear;
 let statusCalcArea, calcAvg, calcCount, calcSum;
 let btnSearchHelp, searchHelpPopup, btnSearchHelpClose;
-let btnExtractFilter, btnCopyAll;
+let btnExtractFilter, btnCopyAll, btnCopySelected, btnPasteClipboard;
 
 // 行コピー用クリップボードバッファ
 let rowClipboardBuffer = null;
@@ -131,6 +131,8 @@ function getDOMElements() {
   searchHelpPopup = document.getElementById('search-help-popup');
   btnSearchHelpClose = document.getElementById('btn-search-help-close');
   btnExtractFilter = document.getElementById('btn-extract-filter');
+  btnCopySelected = document.getElementById('btn-copy-selected');
+  btnPasteClipboard = document.getElementById('btn-paste-clipboard');
   btnCopyAll = document.getElementById('btn-copy-all');
 
   // オートフィルター
@@ -326,6 +328,20 @@ function setupEventListeners() {
     });
   }
 
+  // 選択セルまたは範囲のコピー (Ctrl+C)
+  if (btnCopySelected) {
+    btnCopySelected.addEventListener('click', () => {
+      copySelectedCellsToClipboard();
+    });
+  }
+
+  // クリップボードからの貼り付け (Ctrl+V)
+  if (btnPasteClipboard) {
+    btnPasteClipboard.addEventListener('click', () => {
+      pasteFromClipboard();
+    });
+  }
+
   // 表示中の表全体を変数名付きでクリップボードにコピー
   if (btnCopyAll) {
     btnCopyAll.addEventListener('click', () => {
@@ -469,6 +485,100 @@ function setupEventListeners() {
       if (rownumHeader) {
         selectAllCells();
         showToast('表全体を選択しました (Ctrl+Shift+C で変数名付き全コピー)', 'info');
+        return;
+      }
+      // 行番号セルクリックで行全体を選択
+      const rownumCell = e.target.closest('.tabulator-cell.tabulator-rownum-cell');
+      if (rownumCell) {
+        const rowEl = rownumCell.closest('.tabulator-row');
+        const rows = getAllRows();
+        const rowIdx = rows.findIndex(r => r.getElement && r.getElement() === rowEl);
+        if (rowIdx !== -1) {
+          selectEntireRow(rowIdx);
+        }
+        return;
+      }
+      // 列ヘッダークリックで列全体を選択 (Shift+クリックで範囲選択)
+      const colHeader = e.target.closest('.tabulator-col:not(.tabulator-rownum-cell)');
+      if (colHeader && currentTable) {
+        const field = colHeader.getAttribute('tabulator-field');
+        if (field) {
+          const activeCols = getActiveColumns();
+          const colIdx = activeCols.findIndex(c => c.field === field);
+          if (colIdx !== -1) {
+            if (e.shiftKey && selectionRange && selectionRange.minRow === 0 && selectionAnchor) {
+              selectColumnRange(selectionAnchor.colIndex, colIdx);
+            } else {
+              selectEntireColumn(colIdx);
+            }
+          }
+        }
+        return;
+      }
+    });
+    // 右クリック時: クリックされた対象（セル・行番号・列ヘッダー・空白領域）を特定し、選択範囲外ならフォーカス＆選択を更新
+    tableArea.addEventListener('contextmenu', (e) => {
+      // 1. 行番号セルの右クリック
+      const rownumCell = e.target.closest('.tabulator-cell.tabulator-rownum-cell');
+      if (rownumCell) {
+        const rowEl = rownumCell.closest('.tabulator-row');
+        const rows = getAllRows();
+        const rowIdx = rows.findIndex(r => r.getElement && r.getElement() === rowEl);
+        if (rowIdx !== -1) {
+          selectEntireRow(rowIdx);
+        }
+        return;
+      }
+
+      // 2. 列ヘッダーの右クリック
+      const colHeader = e.target.closest('.tabulator-col:not(.tabulator-rownum-cell)');
+      if (colHeader && currentTable) {
+        const field = colHeader.getAttribute('tabulator-field');
+        if (field) {
+          const activeCols = getActiveColumns();
+          const colIdx = activeCols.findIndex(c => c.field === field);
+          if (colIdx !== -1) {
+            // 既にその列を含む複数列選択がある場合は選択範囲を維持
+            if (!selectionRange || selectionRange.minRow !== 0 || colIdx < selectionRange.minCol || colIdx > selectionRange.maxCol) {
+              selectEntireColumn(colIdx);
+            }
+          }
+        }
+        return;
+      }
+
+      // 3. 通常データセルの右クリック
+      const indices = getCellIndices(e.target);
+      if (indices) {
+        if (!selectionRange || 
+            indices.rowIndex < selectionRange.minRow || indices.rowIndex > selectionRange.maxRow ||
+            indices.colIndex < selectionRange.minCol || indices.colIndex > selectionRange.maxCol) {
+          selectSingleCell(indices.rowIndex, indices.colIndex);
+        }
+        return;
+      }
+
+      // 4. 空白領域（テーブル下部等）での右クリック: ブラウザ標準メニューではなくエディタの貼り付けメニューを表示
+      const tableHolder = e.target.closest('.tabulator-tableholder');
+      if (tableHolder && !e.target.closest('.tabulator-row') && !e.target.closest('.tabulator-col')) {
+        const rows = getAllRows();
+        if (rows.length > 0) {
+          const lastRow = rows[rows.length - 1];
+          const rowEl = lastRow.getElement && lastRow.getElement();
+          if (rowEl) {
+            const firstCell = rowEl.querySelector('.tabulator-cell:not(.tabulator-rownum-cell)');
+            if (firstCell) {
+              const fakeEvent = new MouseEvent('contextmenu', {
+                bubbles: true,
+                cancelable: true,
+                clientX: e.clientX,
+                clientY: e.clientY
+              });
+              firstCell.dispatchEvent(fakeEvent);
+              return;
+            }
+          }
+        }
       }
     });
     tableArea.addEventListener('dblclick', (e) => {
@@ -599,6 +709,18 @@ function handleGlobalKeydown(e) {
       copySelectedCellsToClipboard();
     }
     return;
+  }
+
+  // Ctrl + X (切り取り) - 非編集中
+  if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'x') {
+    if (!isEditing) {
+      const tag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
+      if (tag !== 'input' && tag !== 'textarea') {
+        e.preventDefault();
+        cutSelectedCellsToClipboard();
+        return;
+      }
+    }
   }
 
   // Delete / Backspace (セル一括クリア) - 非編集中
@@ -742,12 +864,19 @@ function getCellIndices(target) {
   const colIndex = cols.findIndex(c => c.field === field);
   if (colIndex === -1) return null;
 
-  const rowEl = cellEl.closest('.tabulator-row');
-  if (!rowEl) return null;
-  const rowIndex = rows.findIndex(r => r.getElement() === rowEl);
+  let rowIndex = -1;
+  if (target.getRow && typeof target.getRow === 'function') {
+    const rowComp = target.getRow();
+    rowIndex = rows.findIndex(r => r === rowComp || (r.getIndex && r.getIndex() === rowComp.getIndex()));
+  }
+  if (rowIndex === -1) {
+    const rowEl = cellEl.closest('.tabulator-row');
+    if (!rowEl) return null;
+    rowIndex = rows.findIndex(r => r.getElement && r.getElement() === rowEl);
+  }
   if (rowIndex === -1) return null;
 
-  return { rowIndex, colIndex, field, rowEl, cellEl };
+  return { rowIndex, colIndex, field, cellEl };
 }
 
 // 単一セルを「表示モード」（選択状態）にする
@@ -805,6 +934,95 @@ function selectAllCells() {
   if (typeof updateCalculationStatusBar === 'function') {
     updateCalculationStatusBar();
   }
+}
+
+// 指定した列全体を選択状態にする (Excelの列ヘッダークリック風)
+function selectEntireColumn(colIndex) {
+  if (!currentTable || !activeTabId) return;
+  const rows = getAllRows();
+  const activeCols = getActiveColumns();
+  if (rows.length === 0 || activeCols.length === 0) return;
+  if (colIndex < 0 || colIndex >= activeCols.length) return;
+
+  activeFocusCell = { rowIndex: 0, colIndex: colIndex };
+  selectionAnchor = { rowIndex: 0, colIndex: colIndex };
+  selectionRange = {
+    minRow: 0,
+    maxRow: rows.length - 1,
+    minCol: colIndex,
+    maxCol: colIndex,
+    startRow: 0,
+    startCol: colIndex,
+    endRow: rows.length - 1,
+    endCol: colIndex
+  };
+
+  updateRangeHighlight();
+  if (typeof updateCalculationStatusBar === 'function') {
+    updateCalculationStatusBar();
+  }
+  const letter = getColumnLetter(colIndex);
+  showToast(`列 ${letter} (${activeCols[colIndex].title || ''}) 全体を選択しました (Ctrl+C でコピー)`, 'info');
+}
+
+// 複数列の範囲を選択状態にする (Shift+クリック / ドラッグ風)
+function selectColumnRange(startCol, endCol) {
+  if (!currentTable || !activeTabId) return;
+  const rows = getAllRows();
+  const activeCols = getActiveColumns();
+  if (rows.length === 0 || activeCols.length === 0) return;
+
+  const minC = Math.max(0, Math.min(startCol, endCol));
+  const maxC = Math.min(activeCols.length - 1, Math.max(startCol, endCol));
+
+  selectionAnchor = { rowIndex: 0, colIndex: startCol };
+  activeFocusCell = { rowIndex: 0, colIndex: endCol };
+  selectionRange = {
+    minRow: 0,
+    maxRow: rows.length - 1,
+    minCol: minC,
+    maxCol: maxC,
+    startRow: 0,
+    startCol: startCol,
+    endRow: rows.length - 1,
+    endCol: endCol
+  };
+
+  updateRangeHighlight();
+  if (typeof updateCalculationStatusBar === 'function') {
+    updateCalculationStatusBar();
+  }
+  const letterStart = getColumnLetter(minC);
+  const letterEnd = getColumnLetter(maxC);
+  showToast(`列 ${letterStart} 〜 列 ${letterEnd} (${maxC - minC + 1}列) 全体を選択しました (Ctrl+C でコピー / Ctrl+V で貼り付け)`, 'info');
+}
+
+// 指定した行全体を選択状態にする (Excelの行番号クリック風)
+function selectEntireRow(rowIndex) {
+  if (!currentTable || !activeTabId) return;
+  const rows = getAllRows();
+  const activeCols = getActiveColumns();
+  if (rows.length === 0 || activeCols.length === 0) return;
+  if (rowIndex < 0 || rowIndex >= rows.length) return;
+
+  activeFocusCell = { rowIndex: rowIndex, colIndex: 0 };
+  selectionAnchor = { rowIndex: rowIndex, colIndex: 0 };
+  selectionRange = {
+    minRow: rowIndex,
+    maxRow: rowIndex,
+    minCol: 0,
+    maxCol: activeCols.length - 1,
+    startRow: rowIndex,
+    startCol: 0,
+    endRow: rowIndex,
+    endCol: activeCols.length - 1
+  };
+
+  updateRangeHighlight();
+  if (typeof updateCalculationStatusBar === 'function') {
+    updateCalculationStatusBar();
+  }
+  showToast(`行 ${rowIndex + 1} 全体を選択しました (Ctrl+C でコピー)`, 'info');
 }
 
 // 入力モードの編集をキャンセルし、元の値に戻して「表示モード」へ切り替える (ESCキー用)
@@ -2127,6 +2345,14 @@ function buildTabulatorColumns(headers) {
       },
       headerContextMenu: [
         {
+          label: "📋 貼り付け (Ctrl+V)",
+          action: () => {
+            selectSingleCell(0, 0);
+            pasteFromClipboard();
+          }
+        },
+        { separator: true },
+        {
           label: "📑 変数名付きで表全体をコピー (Ctrl+Shift+C)",
           action: () => copyAllWithHeadersToClipboard()
         },
@@ -2151,7 +2377,15 @@ function buildTabulatorColumns(headers) {
       headerSort: false, // 勝手な昇順・降順ソートを無効化（ダブルクリックでの変数名変更を確実にする）
       titleFormatter: compositeHeaderFormatter, // 2段ヘッダー（A, B, C... 座標と変数名）
       titleFormatterParams: { colIndex: idx, colLetter: letter },
-      headerTooltip: "ダブルクリックまたは右クリックで列名（変数名）を変更",
+      headerTooltip: "クリックで列全体を選択 / ダブルクリックまたは右クリックで列名（変数名）を変更",
+      headerClick: (e, column) => {
+        if (!column) return;
+        const activeCols = getActiveColumns();
+        const cIdx = activeCols.findIndex(c => c.field === column.getField());
+        if (cIdx !== -1) {
+          selectEntireColumn(cIdx);
+        }
+      },
       resizable: true,
       minWidth: 75,
       headerContextMenu: getHeaderContextMenu()
@@ -2164,16 +2398,105 @@ function buildTabulatorColumns(headers) {
 // 列ヘッダーの右クリックメニュー定義
 function getHeaderContextMenu() {
   return [
+    // 1. クリップボード操作
     {
-      label: "📑 変数名付きで表全体をコピー (Ctrl+Shift+C)",
+      label: "📋 貼り付け (Ctrl+V)",
+      action: (e, column) => {
+        if (!column) return;
+        const activeCols = getActiveColumns();
+        const cIdx = activeCols.findIndex(c => c.field === column.getField());
+        if (cIdx !== -1) {
+          if (!selectionRange || selectionRange.minRow !== 0 || cIdx < selectionRange.minCol || cIdx > selectionRange.maxCol) {
+            selectEntireColumn(cIdx);
+          }
+          pasteFromClipboard();
+        }
+      }
+    },
+    {
+      label: "📋 コピー (Ctrl+C)",
+      action: (e, column) => {
+        if (!column) return;
+        const activeCols = getActiveColumns();
+        const cIdx = activeCols.findIndex(c => c.field === column.getField());
+        if (cIdx !== -1) {
+          if (!selectionRange || selectionRange.minRow !== 0 || cIdx < selectionRange.minCol || cIdx > selectionRange.maxCol) {
+            selectEntireColumn(cIdx);
+          }
+          copySelectedCellsToClipboard();
+        }
+      }
+    },
+    {
+      label: "✂️ 切り取り (Ctrl+X)",
+      action: (e, column) => {
+        if (!column) return;
+        const activeCols = getActiveColumns();
+        const cIdx = activeCols.findIndex(c => c.field === column.getField());
+        if (cIdx !== -1) {
+          if (!selectionRange || selectionRange.minRow !== 0 || cIdx < selectionRange.minCol || cIdx > selectionRange.maxCol) {
+            selectEntireColumn(cIdx);
+          }
+          cutSelectedCellsToClipboard();
+        }
+      }
+    },
+    {
+      label: "🧹 セルをクリア (Delete)",
+      action: (e, column) => {
+        if (!column) return;
+        const activeCols = getActiveColumns();
+        const cIdx = activeCols.findIndex(c => c.field === column.getField());
+        if (cIdx !== -1) {
+          if (!selectionRange || selectionRange.minRow !== 0 || cIdx < selectionRange.minCol || cIdx > selectionRange.maxCol) {
+            selectEntireColumn(cIdx);
+          }
+          clearSelectedCells();
+        }
+      }
+    },
+    { separator: true },
+    // 2. 特殊コピー（変数名付き・表全体）
+    {
+      label: "📑 変数名付きでコピー (Ctrl+Shift+C)",
+      action: (e, column) => {
+        if (!column) return;
+        const activeCols = getActiveColumns();
+        const cIdx = activeCols.findIndex(c => c.field === column.getField());
+        if (cIdx !== -1) {
+          if (!selectionRange || selectionRange.minRow !== 0 || cIdx < selectionRange.minCol || cIdx > selectionRange.maxCol) {
+            selectEntireColumn(cIdx);
+          }
+          copySelectedWithHeadersToClipboard();
+        }
+      }
+    },
+    {
+      label: "📑 変数名付きで表全体をコピー",
       action: () => copyAllWithHeadersToClipboard()
     },
     { separator: true },
+
+    // 3. 列の編集・構成
     {
       label: "✏️ 列名（変数名）を変更",
       action: (e, column) => renameColumn(column)
     },
+    {
+      label: "⬅️ 左に列を追加",
+      action: (e, column) => addColumnRelative(column, 'left')
+    },
+    {
+      label: "➡️ 右に列を追加",
+      action: (e, column) => addColumnRelative(column, 'right')
+    },
+    {
+      label: "🗑️ この列を削除",
+      action: (e, column) => deleteColumn(column)
+    },
     { separator: true },
+
+    // 4. 並べ替え
     {
       label: "🔼 昇順で並べ替え (A→Z, 1→9)",
       action: (e, column) => sortColumn(column, 'asc')
@@ -2187,15 +2510,8 @@ function getHeaderContextMenu() {
       action: (e, column) => clearColumnSort()
     },
     { separator: true },
-    {
-      label: "⬅️ 左に列を追加",
-      action: (e, column) => addColumnRelative(column, 'left')
-    },
-    {
-      label: "➡️ 右に列を追加",
-      action: (e, column) => addColumnRelative(column, 'right')
-    },
-    { separator: true },
+
+    // 5. 列幅の調整
     {
       label: "📐 この列幅を自動調整",
       action: (e, column) => autoFitColumnWidth(column)
@@ -2205,11 +2521,15 @@ function getHeaderContextMenu() {
       action: (e, column) => autoFitAllColumns()
     },
     { separator: true },
+
+    // 6. 絞り込み（フィルター）
     {
       label: "🔍 この列で絞り込み (フィルター)",
       action: (e, column) => openColumnFilter(e, column)
     },
     { separator: true },
+
+    // 7. データクレンジング
     {
       label: "🔢 この列のカンマを外す (1,234 → 1234)",
       action: (e, column) => removeCommasFromColumn(column)
@@ -2234,11 +2554,6 @@ function getHeaderContextMenu() {
     {
       label: "🏷️ この列の数値単位記号を除去",
       action: (e, column) => cleanSpecificColumn(column, 'strip_units')
-    },
-    { separator: true },
-    {
-      label: "🗑️ この列を削除",
-      action: (e, column) => deleteColumn(column)
     }
   ];
 }
@@ -4213,66 +4528,51 @@ function handleNewlineChange(e) {
 
 function getRowContextMenu() {
   return [
+    // 1. クリップボード基本操作（セル・選択範囲）
     {
-      label: "⬆️ 上に行を挿入",
+      label: "📋 貼り付け (Ctrl+V)",
+      action: () => pasteFromClipboard()
+    },
+    {
+      label: "📋 コピー (Ctrl+C)",
+      action: () => copySelectedCellsToClipboard()
+    },
+    {
+      label: "✂️ 切り取り (Ctrl+X)",
+      action: () => cutSelectedCellsToClipboard()
+    },
+    {
+      label: "🧹 セルをクリア (Delete)",
+      action: () => clearSelectedCells()
+    },
+    { separator: true },
+
+    // 2. 特殊コピー（変数名付き・表全体）
+    {
+      label: "📑 変数名付きでコピー (Ctrl+Shift+C)",
+      action: () => copySelectedWithHeadersToClipboard()
+    },
+    {
+      label: "📑 変数名付きで表全体をコピー",
+      action: () => copyAllWithHeadersToClipboard()
+    },
+    { separator: true },
+
+    // 3. 行の操作
+    {
+      label: "⬆️ 上に1行挿入",
       action: (e, row) => addRowRelative(row, 'above')
     },
     {
-      label: "⬇️ 下に行を挿入",
+      label: "⬇️ 下に1行挿入",
       action: (e, row) => addRowRelative(row, 'below')
     },
     {
       label: "📄 この行を複製",
       action: (e, row) => duplicateRow(row)
     },
-    { separator: true },
     {
-      label: "✂️ 行を切り取り",
-      action: (e, row) => {
-        rowClipboardBuffer = Object.assign({}, row.getData());
-        deleteRow(row, true);
-        showToast('行を切り取りました', 'info');
-      }
-    },
-    {
-      label: "📋 行をコピー",
-      action: (e, row) => {
-        rowClipboardBuffer = Object.assign({}, row.getData());
-        showToast('行をコピーしました', 'info');
-      }
-    },
-    {
-      label: "📋 下に貼り付け",
-      action: (e, row) => {
-        if (!rowClipboardBuffer) {
-          showToast('コピーされた行データがありません', 'error');
-          return;
-        }
-        const newRow = Object.assign({}, rowClipboardBuffer, { _id: Date.now() });
-        currentTable.addRow(newRow, false, row).then(() => {
-          const tab = tabs.find(t => t.id === activeTabId);
-          if (tab) {
-            tab.isModified = true;
-            syncCurrentTabData();
-            renderTabs();
-            updateStatusBar(tab);
-          }
-          showToast('行を貼り付けました', 'success');
-        });
-      }
-    },
-    { separator: true },
-    {
-      label: "📑 変数名付きで表全体をコピー (Ctrl+Shift+C)",
-      action: () => copyAllWithHeadersToClipboard()
-    },
-    {
-      label: "📑 選択範囲を変数名付きでコピー",
-      action: () => copySelectedWithHeadersToClipboard()
-    },
-    { separator: true },
-    {
-      label: "🗑️ この行（または選択中の行）を削除",
+      label: "🗑️ この行（または選択行）を削除",
       action: (e, row) => deleteRow(row)
     }
   ];
@@ -4456,37 +4756,116 @@ function copySelectedWithHeadersToClipboard() {
   updateRangeHighlight();
 }
 
-// クリップボードからの貼り付け (TSV / CSV展開、Excel互換)
-async function handleGlobalPaste(e) {
-  if (!currentTable || !activeTabId) return;
+// 行列の末尾にある余分な空行・空列を除去（Excelの列全体・行全体コピー時の数万〜100万行/列の空セル対策）
+function trimClipboardMatrix(matrix) {
+  if (!matrix || matrix.length === 0) return [];
 
-  const tag = document.activeElement ? document.activeElement.tagName.toLowerCase() : '';
-  if (tag === 'input' || tag === 'textarea') {
-    if (document.activeElement.closest('.modal') || document.activeElement.closest('.filter-popup')) {
-      return;
+  // 1. 下から上に向かって、完全に空の行（すべてのセルが空文字/null/undefined）を除去
+  while (matrix.length > 1) {
+    const lastRow = matrix[matrix.length - 1];
+    const isRowEmpty = !lastRow || lastRow.every(val => val === '' || val === null || val === undefined);
+    if (isRowEmpty) {
+      matrix.pop();
+    } else {
+      break;
     }
   }
 
-  let text = '';
-  if (e.clipboardData) {
-    text = e.clipboardData.getData('text/plain');
+  // 2. 全行を見渡し、有効なデータが存在する最右端の列インデックス (maxColWithData) を特定
+  let maxColWithData = -1;
+  for (let r = 0; r < matrix.length; r++) {
+    const row = matrix[r];
+    if (!row) continue;
+    for (let c = row.length - 1; c >= 0; c--) {
+      if (row[c] !== '' && row[c] !== null && row[c] !== undefined) {
+        if (c > maxColWithData) maxColWithData = c;
+        break;
+      }
+    }
   }
-  if (!text && internalClipboardText) {
-    text = internalClipboardText;
+
+  // 全行・全列が空文字の場合
+  if (maxColWithData === -1) {
+    return [['']];
   }
-  if (!text) {
+
+  // 3. 各行を最右端有効列 (maxColWithData + 1) まで切り詰め、幅を揃える
+  return matrix.map(row => {
+    const sliced = row.slice(0, maxColWithData + 1);
+    while (sliced.length <= maxColWithData) {
+      sliced.push('');
+    }
+    return sliced;
+  });
+}
+
+// クリップボード文字列を行列（2次元配列）にパース (TSV/CSV/改行・クォート・Excel完全対応)
+function parseClipboardMatrix(text) {
+  if (!text || typeof text !== 'string') return [];
+
+  // Excel等で列全体がコピーされた場合の末尾の大量の空改行を事前に除去（最大100万行の空行によるメモリ・処理負荷を防止）
+  let cleanText = text;
+  let end = cleanText.length;
+  while (end > 0) {
+    const ch = cleanText[end - 1];
+    if (ch === '\n' || ch === '\r') {
+      end--;
+    } else {
+      break;
+    }
+  }
+  cleanText = cleanText.substring(0, end);
+  if (!cleanText) return [['']];
+
+  // TSV（タブ区切り）またはCSV（カンマ区切り）の判定
+  const hasTab = cleanText.includes('\t');
+  const hasComma = cleanText.includes(',');
+  const delimiter = hasTab ? '\t' : (hasComma ? ',' : '');
+
+  let matrix = [];
+  if (typeof Papa !== 'undefined' && Papa.parse) {
     try {
-      text = await navigator.clipboard.readText();
+      const opts = { skipEmptyLines: false };
+      if (delimiter) opts.delimiter = delimiter;
+      const parsed = Papa.parse(cleanText, opts);
+      if (parsed && Array.isArray(parsed.data) && parsed.data.length > 0) {
+        matrix = parsed.data;
+      }
     } catch (err) {
-      console.warn("Clipboard read failed:", err);
+      console.warn("Papa.parse clipboard error, fallback to split:", err);
     }
   }
-  if (!text) return;
 
-  e.preventDefault();
+  // PapaParse未読み込み時のフォールバック（プレーンテキスト分解）
+  if (matrix.length === 0) {
+    const rawLines = cleanText.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
+    matrix = rawLines.map(line => line.split(delimiter || '\t'));
+  }
 
+  // 行・列単位コピーの末尾余分な空行・空列をスマートに切り詰める
+  return trimClipboardMatrix(matrix);
+}
+
+// 矩形行列データのシートへの展開貼り付け処理 (Excel互換・超高速バッチ処理エンジン)
+async function executePasteMatrix(text) {
+  if (!currentTable || !activeTabId || !text) return;
   const tab = tabs.find(t => t.id === activeTabId);
   if (!tab) return;
+
+  // セル編集中（input）の場合は編集モードを安全に解除
+  const editingCellEl = document.querySelector('.tabulator-cell.tabulator-editing');
+  if (editingCellEl) {
+    const inputEl = editingCellEl.querySelector('input');
+    if (inputEl) inputEl.blur();
+    if (currentEditingCell && typeof currentEditingCell.cancelEdit === 'function') {
+      try { currentEditingCell.cancelEdit(); } catch (_) {}
+    }
+  }
+
+  // 最新のテーブルデータを同期
+  syncCurrentTabData();
+  if (!tab.data) tab.data = [];
+
   const activeCols = getActiveColumns();
   if (activeCols.length === 0) return;
 
@@ -4494,12 +4873,12 @@ async function handleGlobalPaste(e) {
   let startRowIndex = 0;
   let startColIndex = 0;
 
-  if (activeFocusCell) {
-    startRowIndex = activeFocusCell.rowIndex;
-    startColIndex = activeFocusCell.colIndex;
-  } else if (selectionRange) {
-    startRowIndex = selectionRange.minRow;
-    startColIndex = selectionRange.minCol;
+  if (selectionRange) {
+    startRowIndex = Math.max(0, selectionRange.minRow);
+    startColIndex = Math.max(0, selectionRange.minCol);
+  } else if (activeFocusCell) {
+    startRowIndex = Math.max(0, activeFocusCell.rowIndex);
+    startColIndex = Math.max(0, activeFocusCell.colIndex);
   } else {
     const indices = getCellIndices(document.activeElement);
     if (indices) {
@@ -4508,51 +4887,131 @@ async function handleGlobalPaste(e) {
     }
   }
 
-  // TSVテキストを行・列に分解
-  const rawLines = text.replace(/\r\n/g, '\n').replace(/\r/g, '\n').split('\n');
-  if (rawLines.length > 0 && rawLines[rawLines.length - 1] === '') {
-    rawLines.pop();
-  }
-  if (rawLines.length === 0) return;
+  // クリップボード文字列を行列に分解
+  const pasteMatrix = parseClipboardMatrix(text);
+  if (pasteMatrix.length === 0) return;
 
-  const pasteMatrix = rawLines.map(line => line.split('\t'));
   const pasteRowCount = pasteMatrix.length;
   const pasteColCount = Math.max(...pasteMatrix.map(row => row.length));
+  if (pasteColCount === 0) return;
 
-  const allRows = getAllRows();
+  // Excel互換: 1セルのみコピーされていて、シート上で複数セルが範囲選択されている場合は、選択範囲全体に値を展開
+  const isSingleValue = (pasteRowCount === 1 && pasteColCount === 1);
+  const isMultiCellSelection = selectionRange && (selectionRange.maxRow > selectionRange.minRow || selectionRange.maxCol > selectionRange.minCol);
 
-  // 行数が不足している場合、自動で末尾に行を追加（Excelと同等の動作）
+  if (isSingleValue && isMultiCellSelection) {
+    const singleVal = pasteMatrix[0][0] !== undefined ? pasteMatrix[0][0] : '';
+    const minR = Math.max(0, Math.min(selectionRange.minRow, tab.data.length - 1));
+    const maxR = Math.max(0, Math.min(selectionRange.maxRow, tab.data.length - 1));
+    const minC = Math.max(0, Math.min(selectionRange.minCol, activeCols.length - 1));
+    const maxC = Math.max(0, Math.min(selectionRange.maxCol, activeCols.length - 1));
+
+    for (let r = minR; r <= maxR; r++) {
+      const rowObj = tab.data[r];
+      if (!rowObj) continue;
+      for (let c = minC; c <= maxC; c++) {
+        rowObj[activeCols[c].field] = singleVal;
+      }
+    }
+
+    if (typeof currentTable.replaceData === 'function') {
+      await currentTable.replaceData(tab.data);
+    } else if (typeof currentTable.setData === 'function') {
+      await currentTable.setData(tab.data);
+    }
+
+    tab.isModified = true;
+    syncCurrentTabData();
+    renderTabs();
+    updateStatusBar(tab);
+    updateRangeHighlight();
+    const count = (maxR - minR + 1) * (maxC - minC + 1);
+    showToast(`選択範囲 (${maxR - minR + 1}行 × ${maxC - minC + 1}列: 計${count}セル) に貼り付けました`, 'success');
+    return;
+  }
+
+  // 列数が不足している場合、自動で末尾に必要な列を追加（Excel互換）
+  let columnsChanged = false;
+  const neededCols = startColIndex + pasteColCount;
+  if (neededCols > activeCols.length) {
+    const colsToAddCount = neededCols - activeCols.length;
+    for (let i = 0; i < colsToAddCount; i++) {
+      const currentMaxCols = tab.columns.filter(c => c.field).length;
+      const nextLetter = getColumnLetter(currentMaxCols);
+      const newField = `col_${Date.now()}_${i}`;
+      const newTitle = `列 ${currentMaxCols + 1}`;
+      const newColDef = {
+        title: newTitle,
+        field: newField,
+        colIndex: currentMaxCols,
+        colLetter: nextLetter,
+        editor: "input",
+        formatter: excelCellFormatter,
+        sorter: excelSmartSorter,
+        headerSort: false,
+        titleFormatter: compositeHeaderFormatter,
+        titleFormatterParams: { colIndex: currentMaxCols, colLetter: nextLetter },
+        headerTooltip: "クリックで列全体を選択 / ダブルクリックまたは右クリックで列名（変数名）を変更",
+        headerClick: (e, column) => {
+          if (!column) return;
+          const cols = getActiveColumns();
+          const cIdx = cols.findIndex(c => c.field === column.getField());
+          if (cIdx !== -1) selectEntireColumn(cIdx);
+        },
+        resizable: true,
+        minWidth: 80,
+        headerContextMenu: getHeaderContextMenu()
+      };
+      tab.columns.push(newColDef);
+      activeCols.push(newColDef);
+    }
+    tab.headers = tab.columns.filter(c => c.field).map(c => c.title);
+    refreshColumnLetters();
+    columnsChanged = true;
+  }
+
+  // 行数が不足している場合、自動で末尾に必要な行をメモリ上で一括追加（Excel互換・超高速）
+  const currentLen = tab.data.length;
   const neededRows = startRowIndex + pasteRowCount;
-  if (neededRows > allRows.length) {
-    const rowsToAddCount = neededRows - allRows.length;
+  if (neededRows > currentLen) {
+    const rowsToAddCount = neededRows - currentLen;
     for (let i = 0; i < rowsToAddCount; i++) {
-      const newRowObj = { _id: Date.now() + Math.random() };
-      activeCols.forEach(c => newRowObj[c.field] = '');
-      const addedRow = await currentTable.addRow(newRowObj, false);
-      allRows.push(addedRow);
+      const newRowObj = { _id: Date.now() + i + Math.random() };
+      for (let c = 0; c < activeCols.length; c++) {
+        newRowObj[activeCols[c].field] = '';
+      }
+      tab.data.push(newRowObj);
     }
   }
 
-  // 矩形領域に値を展開
+  // 矩形領域に値を展開（メモリ上の一括書き換え）
   for (let r = 0; r < pasteRowCount; r++) {
     const targetRowIdx = startRowIndex + r;
-    const targetRow = allRows[targetRowIdx];
-    if (!targetRow) continue;
+    const rowObj = tab.data[targetRowIdx];
+    if (!rowObj) continue;
 
-    const rowData = targetRow.getData();
     const cols = pasteMatrix[r];
     for (let c = 0; c < cols.length; c++) {
       const targetColIdx = startColIndex + c;
       if (targetColIdx < activeCols.length) {
         const field = activeCols[targetColIdx].field;
-        rowData[field] = cols[c];
+        rowObj[field] = cols[c] !== undefined ? cols[c] : '';
       }
     }
-    targetRow.update(rowData);
+  }
+
+  // Tabulatorへの一括反映（DOM再描画を1回に集約して超高速化）
+  if (columnsChanged && typeof currentTable.setColumns === 'function') {
+    await currentTable.setColumns(tab.columns);
+  }
+  if (typeof currentTable.replaceData === 'function') {
+    await currentTable.replaceData(tab.data);
+  } else if (typeof currentTable.setData === 'function') {
+    await currentTable.setData(tab.data);
   }
 
   // 貼り付け後の選択範囲をペースト領域に設定してハイライト！
-  const endRowIndex = Math.min(allRows.length - 1, startRowIndex + pasteRowCount - 1);
+  const endRowIndex = Math.min(tab.data.length - 1, startRowIndex + pasteRowCount - 1);
   const endColIndex = Math.min(activeCols.length - 1, startColIndex + pasteColCount - 1);
 
   selectionAnchor = { rowIndex: startRowIndex, colIndex: startColIndex };
@@ -4575,6 +5034,74 @@ async function handleGlobalPaste(e) {
 
   updateRangeHighlight();
   showToast(`貼り付けました (${pasteRowCount}行 × ${pasteColCount}列)`, 'success');
+}
+
+// クリップボードからの貼り付け（ボタン / 右クリックメニュー / ショートカット共用）
+async function pasteFromClipboard(customText) {
+  if (!currentTable || !activeTabId) return;
+
+  let text = customText;
+  if (!text) {
+    if (navigator.clipboard && navigator.clipboard.readText) {
+      try {
+        text = await navigator.clipboard.readText();
+      } catch (err) {
+        console.warn("navigator.clipboard.readText failed:", err);
+      }
+    }
+  }
+  if (!text && internalClipboardText) {
+    text = internalClipboardText;
+  }
+
+  if (!text) {
+    showToast('クリップボードが空か、ブラウザの権限が必要です (Ctrl+V をお試しください)', 'info');
+    return;
+  }
+
+  await executePasteMatrix(text);
+}
+
+// グローバル貼り付けイベントハンドラ (Ctrl+V)
+async function handleGlobalPaste(e) {
+  if (!currentTable || !activeTabId) return;
+
+  // 検索バー、フィルターポップアップ、モーダル等の入力中はブラウザ標準動作に任せる
+  const activeEl = document.activeElement;
+  if (activeEl) {
+    if (activeEl.closest('.modal') || 
+        activeEl.closest('.filter-popup') || 
+        activeEl.id === 'search-input' || 
+        activeEl.closest('.search-group')) {
+      return;
+    }
+  }
+
+  let text = '';
+  if (e.clipboardData) {
+    text = e.clipboardData.getData('text/plain');
+  }
+  if (!text && internalClipboardText) {
+    text = internalClipboardText;
+  }
+  if (!text) {
+    try {
+      text = await navigator.clipboard.readText();
+    } catch (err) {
+      console.warn("Clipboard read failed:", err);
+    }
+  }
+  if (!text) return;
+
+  // 単一セル入力モード中（input）の場合:
+  // 貼り付けテキストが単一値（タブや改行を含まない）なら、ユーザーは通常のエディタ内文字挿入を期待しているため標準pasteに任せる
+  const isEditing = !!document.querySelector('.tabulator-cell.tabulator-editing');
+  if (isEditing && !text.includes('\t') && !text.includes('\n')) {
+    return;
+  }
+
+  e.preventDefault();
+  await executePasteMatrix(text);
 }
 
 // 選択セルまたは範囲の一括クリア (Delete / Backspace)
@@ -4626,6 +5153,13 @@ function clearSelectedCells() {
     updateRangeHighlight();
     showToast(`${clearedCount}個のセルをクリアしました`, 'info');
   }
+}
+
+// 選択セルまたは範囲の切り取り (Ctrl+X)
+function cutSelectedCellsToClipboard() {
+  copySelectedCellsToClipboard();
+  clearSelectedCells();
+  showToast('選択範囲を切り取りました', 'info');
 }
 
 // ----------------------------------------------------
