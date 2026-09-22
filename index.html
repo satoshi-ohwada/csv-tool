@@ -169,7 +169,13 @@
 
           <div class="dropdown-separator"></div>
 
-          <!-- 5. 行列操作 -->
+          <!-- 5. ヘッダー・行列操作 -->
+          <button class="dropdown-item" data-action="promote_header" title="表の1行目のデータを列名（変数名）として一括設定し、その行をデータから除外します">
+            <span>🏷️</span> 1行目を列名（変数名）に設定
+          </button>
+          <button class="dropdown-item" data-action="demote_header" title="現在の列名（変数名）を1行目のデータとして挿入し、列名をデフォルトに戻します">
+            <span>📑</span> 列名（変数名）を1行目のデータに変換
+          </button>
           <button class="dropdown-item" data-action="transpose" title="表全体の行と列を入れ替えます (転置)">
             <span>🔄</span> 行と列を入れ替え (転置)
           </button>
@@ -608,6 +614,40 @@
     </div>
   </div>
 
+  <!-- 貼り付けアシストモーダル (ブラウザ権限制限対策) -->
+  <div id="paste-assist-modal" class="modal-overlay" style="display: none;">
+    <div class="modal-dialog paste-dialog">
+      <div class="modal-header">
+        <h3 class="modal-title">📋 クリップボードから貼り付け</h3>
+        <button id="btn-paste-assist-close" class="modal-close-btn" title="閉じる (Esc)">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="paste-notice-box">
+          <div class="paste-notice-icon">ℹ️</div>
+          <div class="paste-notice-text">
+            <strong>ブラウザ（Firefox等）のセキュリティ制限について</strong><br>
+            ブラウザの仕様により、メニューやボタンからの直接読み取りには「ブラウザの特権」が必要です。<br>
+            <strong>💡 最も簡単な方法:</strong> 表上のセルをクリックして、キーボードの <kbd>Ctrl</kbd> + <kbd>V</kbd> を直接押すと、この画面を経由せずに一瞬で貼り付けられます。
+          </div>
+        </div>
+        <div style="margin-top: 12px;">
+          <label for="paste-assist-input" style="font-size: 13px; font-weight: 600; color: var(--text-primary); display: block; margin-bottom: 6px;">
+            下の入力枠をクリックして <kbd>Ctrl</kbd> + <kbd>V</kbd> で貼り付けてください（貼り付け後すぐに自動反映されます）:
+          </label>
+          <textarea id="paste-assist-input" class="paste-assist-textarea" rows="6" placeholder="ここに [Ctrl+V] で貼り付けてください..."></textarea>
+          <label style="display: flex; align-items: center; gap: 8px; margin-top: 8px; font-size: 12.5px; color: var(--text-secondary); cursor: pointer;">
+            <input type="checkbox" id="paste-assist-first-row-header">
+            <span>🏷️ 貼り付けデータの1行目を列名（変数名）に設定する</span>
+          </label>
+        </div>
+        <div class="save-modal-footer" style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; padding-top: 10px;">
+          <button id="btn-paste-assist-cancel" class="tool-btn">キャンセル</button>
+          <button id="btn-paste-assist-apply" class="tool-btn primary">表に反映する</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- トースト通知コンテナ -->
   <div id="toast-container" class="toast-container"></div>
 
@@ -615,6 +655,6 @@
   <script src="lib/encoding.min.js"></script>
   <script src="lib/papaparse.min.js"></script>
   <script src="lib/tabulator.min.js"></script>
-  <script src="app.js?v=31"></script>
+  <script src="app.js?v=33"></script>
 </body>
 </html>

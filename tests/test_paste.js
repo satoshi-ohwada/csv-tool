@@ -750,6 +750,144 @@ async function start() {
     assert.ok(elapsed < 2000, `実行時間が2秒未満（実際は${elapsed}ms）で超高速に完了すること`);
   });
 
+  // Test 18: ブラウザ権限制限時の貼り付けアシストモーダル表示と反映
+  await runTest('権限制限時の貼り付けアシスト: readText失敗時にモーダルが表示され、入力テキストが正しく反映される', async () => {
+    const initialRows = [
+      { _id: 1, col_0: 'Old_0', col_1: 'Old_1' }
+    ];
+    setupTestTab(initialRows, ['列1', '列2']);
+
+    await vm.runInContext(`
+      (async () => {
+        selectSingleCell(0, 0);
+        const origClipboard = navigator.clipboard;
+        navigator.clipboard = {
+          readText: async () => { throw new Error("Clipboard read requires browser privileges"); }
+        };
+        internalClipboardText = '';
+
+        await pasteFromClipboard();
+
+        const modal = document.getElementById('paste-assist-modal');
+        if (modal.style.display !== 'flex') {
+          throw new Error('paste-assist-modal should be displayed as flex');
+        }
+
+        // テキストエリアへのペーストイベントを発火
+        const textarea = document.getElementById('paste-assist-input');
+        const pasteEvt = {
+          preventDefault: () => {},
+          clipboardData: { getData: () => "New_0\\tNew_1" }
+        };
+        textarea.dispatchEvent(Object.assign(pasteEvt, { type: 'paste' }));
+
+        navigator.clipboard = origClipboard;
+      })()
+    `, ctx);
+
+    const data = vm.runInContext('tabs[0].data', ctx);
+    const modalDisplay = vm.runInContext("document.getElementById('paste-assist-modal').style.display", ctx);
+
+    assert.strictEqual(data[0].col_0, 'New_0');
+    assert.strictEqual(data[0].col_1, 'New_1');
+    assert.strictEqual(modalDisplay, 'none', '反映後にモーダルが非表示になること');
+  });
+
+  // Test 19: promoteRowToHeader による1行目の列名（変数名）一括設定
+  await runTest('promoteRowToHeader: 1行目のデータが列名（変数名）に設定され、データ行から除外される', async () => {
+    const initialRows = [
+      { _id: 1, col_0: '氏名', col_1: '年齢', col_2: '居住地' },
+      { _id: 2, col_0: '田中', col_1: '28', col_2: '東京都' },
+      { _id: 3, col_0: '佐藤', col_1: '34', col_2: '大阪府' }
+    ];
+    setupTestTab(initialRows, ['列 1', '列 2', '列 3']);
+
+    vm.runInContext('promoteRowToHeader(0)', ctx);
+
+    const tab = vm.runInContext('tabs[0]', ctx);
+    assert.strictEqual(tab.headers[0], '氏名');
+    assert.strictEqual(tab.headers[1], '年齢');
+    assert.strictEqual(tab.headers[2], '居住地');
+    assert.strictEqual(tab.columns[1].title, '氏名');
+    assert.strictEqual(tab.columns[2].title, '年齢');
+    assert.strictEqual(tab.columns[3].title, '居住地');
+    assert.strictEqual(tab.data.length, 2, '1行目が削除されてデータは2行になること');
+    assert.strictEqual(tab.data[0].col_0, '田中');
+    assert.strictEqual(tab.data[0]._id, 1);
+    assert.strictEqual(tab.data[1].col_0, '佐藤');
+    assert.strictEqual(tab.data[1]._id, 2);
+    assert.strictEqual(tab.isModified, true);
+  });
+
+  // Test 20: demoteHeaderToRow による列名の1行目データへの変換（逆変換）
+  await runTest('demoteHeaderToRow: 現在の列名が1行目のデータとして挿入され、列名がデフォルトに戻る', async () => {
+    const initialRows = [
+      { _id: 1, col_0: '田中', col_1: '28' }
+    ];
+    setupTestTab(initialRows, ['氏名', '年齢']);
+
+    vm.runInContext('demoteHeaderToRow()', ctx);
+
+    const tab = vm.runInContext('tabs[0]', ctx);
+    assert.strictEqual(tab.headers[0], '列 1');
+    assert.strictEqual(tab.headers[1], '列 2');
+    assert.strictEqual(tab.columns[1].title, '列 1');
+    assert.strictEqual(tab.columns[2].title, '列 2');
+    assert.strictEqual(tab.data.length, 2, '列名行が挿入されて2行になること');
+    assert.strictEqual(tab.data[0].col_0, '氏名');
+    assert.strictEqual(tab.data[0].col_1, '年齢');
+    assert.strictEqual(tab.data[1].col_0, '田中');
+    assert.strictEqual(tab.data[1].col_1, '28');
+  });
+
+  // Test 21: 空白セルと重複列名のハンドリング
+  await runTest('promoteRowToHeader 空白・重複処理: 空白セルにはフォールバック名、重複には連番サフィックスが付与される', async () => {
+    const initialRows = [
+      { _id: 1, col_0: 'スコア', col_1: '', col_2: 'スコア' },
+      { _id: 2, col_0: '100', col_1: 'A', col_2: '90' }
+    ];
+    setupTestTab(initialRows, ['初期1', '初期2', '初期3']);
+
+    vm.runInContext('promoteRowToHeader(0)', ctx);
+
+    const tab = vm.runInContext('tabs[0]', ctx);
+    assert.strictEqual(tab.headers[0], 'スコア');
+    assert.strictEqual(tab.headers[1], '初期2', '空セルは元の列名にフォールバック');
+    assert.strictEqual(tab.headers[2], 'スコア_2', '重複列名には連番サフィックス');
+    assert.strictEqual(tab.data.length, 1);
+  });
+
+  // Test 22: executeDataClean による promote_header / demote_header ディスパッチ
+  await runTest('executeDataClean: promote_header および demote_header アクションが正しくディスパッチされる', async () => {
+    const initialRows = [
+      { _id: 1, col_0: '項目A', col_1: '項目B' },
+      { _id: 2, col_0: '値1', col_1: '値2' }
+    ];
+    setupTestTab(initialRows, ['列 1', '列 2']);
+
+    vm.runInContext('executeDataClean("promote_header")', ctx);
+    let tab = vm.runInContext('tabs[0]', ctx);
+    assert.strictEqual(tab.headers[0], '項目A');
+    assert.strictEqual(tab.data.length, 1);
+
+    vm.runInContext('executeDataClean("demote_header")', ctx);
+    tab = vm.runInContext('tabs[0]', ctx);
+    assert.strictEqual(tab.headers[0], '列 1');
+    assert.strictEqual(tab.data.length, 2);
+    assert.strictEqual(tab.data[0].col_0, '項目A');
+  });
+
+  // Test 23: コンテキストメニューに「列名（変数名）に設定」項目が存在する
+  await runTest('コンテキストメニュー: 行メニューとヘッダーメニューに「列名（変数名）に設定」が存在する', () => {
+    const rowMenu = vm.runInContext('getRowContextMenu()', ctx);
+    const rowLabels = rowMenu.map(m => m.label || '---');
+    assert.ok(rowLabels.some(l => l.includes('列名（変数名）に設定')), '行メニューに項目が存在すること');
+
+    const headerMenu = vm.runInContext('getHeaderContextMenu()', ctx);
+    const headerLabels = headerMenu.map(m => m.label || '---');
+    assert.ok(headerLabels.some(l => l.includes('1行目を列名（変数名）に設定')), 'ヘッダーメニューに項目が存在すること');
+  });
+
   console.log('\n========================================');
   console.log(`TEST SUMMARY: Passed: ${passed}, Failed: ${failed}`);
   console.log('========================================\n');

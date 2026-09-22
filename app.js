@@ -24,6 +24,7 @@ let btnToggleNumRange, filterNumRangePanel, filterNumMin, filterNumMax, btnFilte
 let statusCalcArea, calcAvg, calcCount, calcSum;
 let btnSearchHelp, searchHelpPopup, btnSearchHelpClose;
 let btnExtractFilter, btnCopyAll, btnCopySelected, btnPasteClipboard;
+let pasteAssistModal, btnPasteAssistClose, btnPasteAssistCancel, btnPasteAssistApply, pasteAssistInput, pasteAssistFirstRowHeader;
 
 // 行コピー用クリップボードバッファ
 let rowClipboardBuffer = null;
@@ -134,6 +135,14 @@ function getDOMElements() {
   btnCopySelected = document.getElementById('btn-copy-selected');
   btnPasteClipboard = document.getElementById('btn-paste-clipboard');
   btnCopyAll = document.getElementById('btn-copy-all');
+
+  // 貼り付けアシストモーダル
+  pasteAssistModal = document.getElementById('paste-assist-modal');
+  btnPasteAssistClose = document.getElementById('btn-paste-assist-close');
+  btnPasteAssistCancel = document.getElementById('btn-paste-assist-cancel');
+  btnPasteAssistApply = document.getElementById('btn-paste-assist-apply');
+  pasteAssistInput = document.getElementById('paste-assist-input');
+  pasteAssistFirstRowHeader = document.getElementById('paste-assist-first-row-header');
 
   // オートフィルター
   filterActiveBadge = document.getElementById('filter-active-badge');
@@ -339,6 +348,60 @@ function setupEventListeners() {
   if (btnPasteClipboard) {
     btnPasteClipboard.addEventListener('click', () => {
       pasteFromClipboard();
+    });
+  }
+
+  // 貼り付けアシストモーダル
+  if (btnPasteAssistClose) btnPasteAssistClose.addEventListener('click', hidePasteAssistModal);
+  if (btnPasteAssistCancel) btnPasteAssistCancel.addEventListener('click', hidePasteAssistModal);
+  if (pasteAssistModal) {
+    pasteAssistModal.addEventListener('click', (e) => {
+      if (e.target === pasteAssistModal) hidePasteAssistModal();
+    });
+  }
+  if (pasteAssistInput) {
+    pasteAssistInput.addEventListener('paste', async (e) => {
+      const pastedText = e.clipboardData ? e.clipboardData.getData('text/plain') : '';
+      if (pastedText) {
+        e.preventDefault();
+        const shouldPromote = pasteAssistFirstRowHeader && pasteAssistFirstRowHeader.checked;
+        hidePasteAssistModal();
+        await executePasteMatrix(pastedText);
+        if (shouldPromote) {
+          promoteRowToHeader(0);
+        }
+      }
+    });
+    pasteAssistInput.addEventListener('keydown', async (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+        e.preventDefault();
+        const text = pasteAssistInput.value;
+        if (text) {
+          const shouldPromote = pasteAssistFirstRowHeader && pasteAssistFirstRowHeader.checked;
+          hidePasteAssistModal();
+          await executePasteMatrix(text);
+          if (shouldPromote) {
+            promoteRowToHeader(0);
+          }
+        }
+      } else if (e.key === 'Escape') {
+        hidePasteAssistModal();
+      }
+    });
+  }
+  if (btnPasteAssistApply) {
+    btnPasteAssistApply.addEventListener('click', async () => {
+      const text = pasteAssistInput ? pasteAssistInput.value : '';
+      if (text) {
+        const shouldPromote = pasteAssistFirstRowHeader && pasteAssistFirstRowHeader.checked;
+        hidePasteAssistModal();
+        await executePasteMatrix(text);
+        if (shouldPromote) {
+          promoteRowToHeader(0);
+        }
+      } else {
+        showToast('貼り付けるテキストが入力されていません', 'info');
+      }
     });
   }
 
@@ -2479,6 +2542,10 @@ function getHeaderContextMenu() {
 
     // 3. 列の編集・構成
     {
+      label: "🏷️ 1行目を列名（変数名）に設定",
+      action: () => promoteRowToHeader(0)
+    },
+    {
       label: "✏️ 列名（変数名）を変更",
       action: (e, column) => renameColumn(column)
     },
@@ -4560,6 +4627,14 @@ function getRowContextMenu() {
 
     // 3. 行の操作
     {
+      label: "🏷️ この行を列名（変数名）に設定",
+      action: (e, row) => {
+        const rIdx = getRowIndexFromComponent(row);
+        promoteRowToHeader(rIdx);
+      }
+    },
+    { separator: true },
+    {
       label: "⬆️ 上に1行挿入",
       action: (e, row) => addRowRelative(row, 'above')
     },
@@ -5033,7 +5108,7 @@ async function executePasteMatrix(text) {
   updateStatusBar(tab);
 
   updateRangeHighlight();
-  showToast(`貼り付けました (${pasteRowCount}行 × ${pasteColCount}列)`, 'success');
+  showToast(`貼り付けました (${pasteRowCount}行 × ${pasteColCount}列) <button onclick="promoteRowToHeader(0)" class="toast-action-btn" title="1行目の値を列名（変数名）として一括設定します">🏷️ 1行目を列名にする</button>`, 'success');
 }
 
 // クリップボードからの貼り付け（ボタン / 右クリックメニュー / ショートカット共用）
@@ -5046,7 +5121,7 @@ async function pasteFromClipboard(customText) {
       try {
         text = await navigator.clipboard.readText();
       } catch (err) {
-        console.warn("navigator.clipboard.readText failed:", err);
+        console.warn("navigator.clipboard.readText failed or blocked by browser:", err);
       }
     }
   }
@@ -5055,11 +5130,35 @@ async function pasteFromClipboard(customText) {
   }
 
   if (!text) {
-    showToast('クリップボードが空か、ブラウザの権限が必要です (Ctrl+V をお試しください)', 'info');
+    // ブラウザの特権・セキュリティ制限（Firefox等）により直接読み取れなかった場合はアシスト画面を表示
+    showPasteAssistModal();
     return;
   }
 
   await executePasteMatrix(text);
+}
+
+// 貼り付けアシストモーダル表示 (Firefox等のブラウザ権限制限対策)
+function showPasteAssistModal() {
+  const modal = document.getElementById('paste-assist-modal');
+  const textarea = document.getElementById('paste-assist-input');
+  if (!modal || !textarea) {
+    showToast('ブラウザのセキュリティ制限により貼り付けできません。表上で [Ctrl+V] を直接押してください', 'info');
+    return;
+  }
+  modal.style.display = 'flex';
+  textarea.value = '';
+  setTimeout(() => {
+    try { textarea.focus(); } catch (_) {}
+  }, 50);
+}
+
+// 貼り付けアシストモーダル非表示
+function hidePasteAssistModal() {
+  const modal = document.getElementById('paste-assist-modal');
+  if (modal) {
+    modal.style.display = 'none';
+  }
 }
 
 // グローバル貼り付けイベントハンドラ (Ctrl+V)
@@ -5070,6 +5169,7 @@ async function handleGlobalPaste(e) {
   const activeEl = document.activeElement;
   if (activeEl) {
     if (activeEl.closest('.modal') || 
+        activeEl.closest('.modal-overlay') || 
         activeEl.closest('.filter-popup') || 
         activeEl.id === 'search-input' || 
         activeEl.closest('.search-group')) {
@@ -6541,6 +6641,144 @@ function removeCommasFromNumber(str) {
 }
 
 
+// 行オブジェクトまたはコンポーネントから 0-indexed の行番号を取得
+function getRowIndexFromComponent(row) {
+  if (!row) return 0;
+  if (typeof row.getPosition === 'function') {
+    const pos = row.getPosition();
+    if (typeof pos === 'number' && pos >= 1) return pos - 1;
+  }
+  if (currentTable && typeof currentTable.getRows === 'function') {
+    const allRows = currentTable.getRows();
+    const idx = allRows.indexOf(row);
+    if (idx !== -1) return idx;
+  }
+  if (typeof row.getData === 'function') {
+    const d = row.getData();
+    const tab = tabs.find(t => t.id === activeTabId);
+    if (tab && tab.data) {
+      const idx = tab.data.findIndex(r => r === d || (r._id !== undefined && r._id === d._id));
+      if (idx !== -1) return idx;
+    }
+  }
+  return 0;
+}
+
+// 指定した行を列名（変数名）として一括設定 (Excelの「1行目をヘッダーとして使用」機能)
+function promoteRowToHeader(targetRowIndex = 0) {
+  if (!currentTable || !activeTabId) return;
+  const tab = tabs.find(t => t.id === activeTabId);
+  if (!tab || !tab.data || tab.data.length === 0) {
+    showToast('変換するデータ行が存在しません', 'warning');
+    return;
+  }
+
+  if (targetRowIndex < 0 || targetRowIndex >= tab.data.length) {
+    targetRowIndex = 0;
+  }
+
+  // 最新データを同期
+  syncCurrentTabData();
+
+  const headerRow = tab.data[targetRowIndex];
+  if (!headerRow) return;
+
+  const activeCols = tab.columns ? tab.columns.filter(c => c.field) : [];
+  if (activeCols.length === 0) return;
+
+  // 各列の新しい変数名（ヘッダー）を抽出・生成
+  const usedNames = new Set();
+  const newHeaders = activeCols.map((col, idx) => {
+    let rawVal = headerRow[col.field];
+    let name = (rawVal !== null && rawVal !== undefined) ? String(rawVal).trim() : '';
+    if (!name) {
+      name = col.title || `列 ${idx + 1}`;
+    }
+    // 重複した列名をスマートに回避 (例: 名前, 名前_2)
+    let finalName = name;
+    let counter = 2;
+    while (usedNames.has(finalName)) {
+      finalName = `${name}_${counter}`;
+      counter++;
+    }
+    usedNames.add(finalName);
+    return finalName;
+  });
+
+  // 対象行をデータ配列から削除
+  tab.data.splice(targetRowIndex, 1);
+
+  // _id を 1から振り直し
+  tab.data.forEach((r, idx) => {
+    r._id = idx + 1;
+  });
+
+  // ヘッダーと列定義を更新
+  tab.headers = newHeaders;
+  tab.columns = buildTabulatorColumns(newHeaders);
+  tab.isModified = true;
+
+  // 選択範囲をリセット
+  selectionRange = null;
+  activeFocusCell = null;
+
+  // テーブル再構築・再描画
+  renderTableForTab(tab);
+  renderTabs();
+  updateStatusBar(tab);
+
+  showToast(`${targetRowIndex === 0 ? '1行目' : `行 ${targetRowIndex + 1}`}を列名（変数名）に設定しました (${newHeaders.length}列)`, 'success');
+}
+
+// 現在の列名（変数名）を1行目のデータとして挿入 (逆変換: ヘッダーを行に変換)
+function demoteHeaderToRow() {
+  if (!currentTable || !activeTabId) return;
+  const tab = tabs.find(t => t.id === activeTabId);
+  if (!tab) return;
+
+  syncCurrentTabData();
+
+  const activeCols = tab.columns ? tab.columns.filter(c => c.field) : [];
+  if (activeCols.length === 0) return;
+
+  // 現在の列名を変数名行として1行目のデータオブジェクトに格納
+  const headerRowData = { _id: 1 };
+  activeCols.forEach((col) => {
+    headerRowData[col.field] = col.title || '';
+  });
+
+  // データの先頭に挿入
+  tab.data.unshift(headerRowData);
+
+  // _id を振り直し
+  tab.data.forEach((r, idx) => {
+    r._id = idx + 1;
+  });
+
+  // デフォルト列名（列 1, 列 2, ...）を生成
+  const defaultHeaders = activeCols.map((_, idx) => `列 ${idx + 1}`);
+  tab.headers = defaultHeaders;
+  tab.columns = buildTabulatorColumns(defaultHeaders);
+  tab.isModified = true;
+
+  // 選択範囲をリセット
+  selectionRange = null;
+  activeFocusCell = null;
+
+  // テーブル再描画
+  renderTableForTab(tab);
+  renderTabs();
+  updateStatusBar(tab);
+
+  showToast(`列名（変数名）を1行目のデータに変換しました (${defaultHeaders.length}列)`, 'info');
+}
+
+// グローバルスコープにも公開
+if (typeof window !== 'undefined') {
+  window.promoteRowToHeader = promoteRowToHeader;
+  window.demoteHeaderToRow = demoteHeaderToRow;
+}
+
 // 表全体の行と列を入れ替え（転置: Transpose）
 function transposeCurrentTable() {
   if (!currentTable || !activeTabId) return;
@@ -6931,6 +7169,16 @@ function applyCleanTransformation(str, action) {
 
 function executeDataClean(action) {
   if (!currentTable || !activeTabId) return;
+
+  if (action === 'promote_header') {
+    promoteRowToHeader(0);
+    return;
+  }
+
+  if (action === 'demote_header') {
+    demoteHeaderToRow();
+    return;
+  }
 
   if (action === 'transpose') {
     transposeCurrentTable();
