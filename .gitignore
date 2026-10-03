@@ -1,25 +1,27 @@
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Editor directories and files
-.idea/
-.vscode/
-*.sublime-project
-*.sublime-workspace
-
-# Node / npm
-node_modules/
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-
-# Temporary & Log files
-*.log
+# Work & Scratch Directories (Ignored by Git, invisible in GitHub Desktop)
+work/*
+!work/.gitkeep
+scratch/*
+!scratch/.gitkeep
+_tmp/
 tmp/
-scratch/
+temp/
+
+# Temporary, debug & backup files
+*.tmp
+*.bak
+*.swp
+*~
+*.log
+*.dump
+
+# OS & Editor generated files
+.DS_Store
+Thumbs.db
+ehthumbs.db
+.vscode/
+.idea/
+
+# Environment files & Dependencies
+.env
+node_modules/
